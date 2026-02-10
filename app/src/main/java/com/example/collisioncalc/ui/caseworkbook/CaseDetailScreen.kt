@@ -14,6 +14,10 @@ fun CaseDetailScreen(
     caseFile: CaseFile,
     onBack: () -> Unit,
 
+    // NEW: tab restore support (UI-only)
+    initialTab: CaseTab = CaseTab.CRASH,
+    onTabChanged: (CaseTab) -> Unit = {},
+
     // Phase 1
     onUpdateCrashInfo: (CollisionInfo) -> Unit,
 
@@ -33,16 +37,20 @@ fun CaseDetailScreen(
     onGoToMomentum: () -> Unit,
     onGoToUnitTools: () -> Unit,
 
-
     // Calcs
     onOpenCalculation: (calcId: CalcId) -> Unit,
 
     // Save calc into this case (used by in-case Unit Tools)
     onSaveCalculation: (SavedCalculation) -> Unit
-
 ) {
-    var tab by remember(caseFile.caseId) { mutableStateOf(CaseTab.CRASH) }
+    var tab by remember(caseFile.caseId) { mutableStateOf(initialTab) }
     var showUnitTools by remember(caseFile.caseId) { mutableStateOf(false) }
+
+    // If caller restores tab, ensure UI reflects it when screen is recreated
+    LaunchedEffect(caseFile.caseId, initialTab) {
+        tab = initialTab
+        onTabChanged(initialTab)
+    }
 
     Scaffold(
         topBar = {
@@ -70,7 +78,10 @@ fun CaseDetailScreen(
                 CaseTab.entries.forEach { t ->
                     Tab(
                         selected = tab == t,
-                        onClick = { tab = t },
+                        onClick = {
+                            tab = t
+                            onTabChanged(t)
+                        },
                         text = { Text(t.name) }
                     )
                 }
@@ -83,7 +94,6 @@ fun CaseDetailScreen(
                         onUpdateCrashInfo = onUpdateCrashInfo
                     )
 
-
                     CaseTab.UNITS -> UnitsTabContent(
                         caseFile = caseFile,
                         onOpenVehicle = onOpenVehicle,
@@ -93,7 +103,6 @@ fun CaseDetailScreen(
                         onRenameUnit = onRenameUnit,
                         onRemoveUnit = onRemoveUnit
                     )
-
 
                     CaseTab.CALCS -> CalcsTabContent(
                         caseFile = caseFile,

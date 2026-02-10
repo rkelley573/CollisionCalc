@@ -15,6 +15,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -28,6 +30,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import com.example.collisioncalc.data.*
 import com.example.collisioncalc.ui.caseworkbook.CaseDetailScreen
 import com.example.collisioncalc.ui.caseworkbook.CaseListScreen
+import com.example.collisioncalc.ui.caseworkbook.CaseTab
 import com.example.collisioncalc.ui.caseworkbook.NewCaseScreen
 import com.example.collisioncalc.ui.screens.*
 import com.example.collisioncalc.ui.theme.CollisionCalcTheme
@@ -60,7 +63,6 @@ private sealed class Screen {
     data class TireCompareCase(val caseId: CaseId) : Screen()
     data class CalculationDetail(val caseId: CaseId, val calcId: CalcId) : Screen()
     data class UnitToolsCase(val caseId: CaseId) : Screen()
-
 }
 
 @Composable
@@ -68,7 +70,28 @@ private fun AppRoot() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { CaseRepository(context, scope) }
+
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+
+    // NEW: simple manual back stack for “previous screen” behavior
+    val backStack = remember { mutableStateListOf<Screen>() }
+
+    // NEW: remember last selected tab per case so returning doesn’t reset to CRASH
+    val caseLastTab = remember { mutableStateMapOf<CaseId, CaseTab>() }
+
+    fun navigate(to: Screen, addToBackStack: Boolean = true) {
+        if (addToBackStack) backStack.add(screen)
+        screen = to
+    }
+
+    fun popBack(fallback: Screen = Screen.Home) {
+        if (backStack.isNotEmpty()) {
+            screen = backStack.removeAt(backStack.lastIndex)
+        } else {
+            screen = fallback
+        }
+    }
+
     val focusManager = LocalFocusManager.current
 
     // In-memory “case” for Quick Tools
@@ -106,85 +129,86 @@ private fun AppRoot() {
             // ---------------- Home ----------------
 
             Screen.Home -> HomeScreen(
-                onOpenUnitConverter = { screen = Screen.UnitToolQuick },
-                onOpenMomentumQuick = { screen = Screen.MomentumQuick },
-                onOpenTireCompare = { screen = Screen.TireCompare },
-                onOpenCaseWorkbook = { screen = Screen.CaseList },
-                onOpenQuickToolsCalcs = { screen = Screen.QuickToolsCalcs }
+                onOpenUnitConverter = { navigate(Screen.UnitToolQuick) },
+                onOpenMomentumQuick = { navigate(Screen.MomentumQuick) },
+                onOpenTireCompare = { navigate(Screen.TireCompare) },
+                onOpenCaseWorkbook = { navigate(Screen.CaseList) },
+                onOpenQuickToolsCalcs = { navigate(Screen.QuickToolsCalcs) }
             )
 
             // ---------------- Quick Tools ----------------
 
             Screen.UnitToolQuick -> UnitConverterScreen(
                 caseFile = quickToolsCase,
-                onBack = { screen = Screen.Home },
+                onBack = { popBack() },
                 onSaveCalculation = {
                     saveQuickCalc(it)
-                    screen = Screen.QuickToolsCalcs
+                    navigate(Screen.QuickToolsCalcs, addToBackStack = false) // replace current
                 }
             )
 
             Screen.MomentumQuick -> MomentumWizardScreen(
                 caseFile = quickToolsCase,
-                onBack = { screen = Screen.Home },
+                onBack = { popBack() },
                 onSaveCalculation = {
                     saveQuickCalc(it)
-                    screen = Screen.QuickToolsCalcs
+                    navigate(Screen.QuickToolsCalcs, addToBackStack = false) // replace current
                 }
             )
 
             Screen.TireCompare -> TireSizeCompareScreen(
-                onBack = { screen = Screen.Home }
+                onBack = { popBack() }
             )
 
             Screen.QuickToolsCalcs -> QuickToolsCalcsScreen(
                 caseFile = quickToolsCase,
-                onBack = { screen = Screen.Home },
-                onOpenCalc = { calcId -> screen = Screen.QuickCalcDetail(calcId) } // ✅ fixed "it"
+                onBack = { popBack() },
+                onOpenCalc = { calcId -> navigate(Screen.QuickCalcDetail(calcId)) }
             )
 
             is Screen.QuickCalcDetail -> {
                 val calc = findQuickCalc(s.calcId)
                 if (calc == null) {
-                    screen = Screen.QuickToolsCalcs
+                    navigate(Screen.QuickToolsCalcs, addToBackStack = false)
                 } else {
                     CalculationDetailScreen(
                         caseFile = quickToolsCase,
                         calcId = s.calcId,
-                        onBack = { screen = Screen.QuickToolsCalcs }
+                        onBack = { popBack() }
                     )
                 }
             }
+
             is Screen.UnitToolsCase -> {
                 val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     UnitConverterScreen(
                         caseFile = caseFile!!,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
                 }
             }
 
-
             // ---------------- Case Workbook ----------------
 
             Screen.CaseList -> CaseListScreen(
                 cases = repo.caseSummaries,
-                onBack = { screen = Screen.Home },
-                onNewCase = { screen = Screen.NewCase },
-                onOpenCase = { caseId -> screen = Screen.CaseDetail(caseId) }
+                onBack = { popBack() },
+                onNewCase = { navigate(Screen.NewCase) },
+                onOpenCase = { caseId -> navigate(Screen.CaseDetail(caseId)) }
             )
 
             Screen.NewCase -> NewCaseScreen(
-                onBack = { screen = Screen.CaseList },
+                onBack = { popBack() },
                 onCreate = {
                     val c = repo.createCase(it)
-                    screen = Screen.CaseDetail(c.caseId)
+                    // Go straight to the case; do NOT keep NewCase on back stack
+                    navigate(Screen.CaseDetail(c.caseId), addToBackStack = false)
                 }
             )
 
@@ -193,11 +217,16 @@ private fun AppRoot() {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseList })
+                    LoadingScreen(onBack = { popBack(Screen.CaseList) })
                 } else {
+                    val rememberedTab = caseLastTab[s.caseId] ?: CaseTab.CRASH
+
                     CaseDetailScreen(
                         caseFile = caseFile!!,
-                        onBack = { screen = Screen.CaseList },
+                        onBack = { popBack() },
+
+                        initialTab = rememberedTab,
+                        onTabChanged = { t -> caseLastTab[s.caseId] = t },
 
                         onUpdateCrashInfo = { repo.updateCrashInfo(s.caseId, it) },
 
@@ -207,18 +236,17 @@ private fun AppRoot() {
                         onRemoveUnit = { unitId -> repo.removeUnit(s.caseId, unitId) },
 
                         onAddNote = { repo.addNote(s.caseId, it) },
-                        onOpenVehicle = { vehicleId -> screen = Screen.VehicleDetail(s.caseId, vehicleId) },
-                        onOpenPedestrian = { unitId -> screen = Screen.PedestrianDetail(s.caseId, unitId) },
+                        onOpenVehicle = { vehicleId -> navigate(Screen.VehicleDetail(s.caseId, vehicleId)) },
+                        onOpenPedestrian = { unitId -> navigate(Screen.PedestrianDetail(s.caseId, unitId)) },
 
-                        onGoToCombinedSpeed = { screen = Screen.CombinedSpeed(s.caseId) },
-                        onGoToMomentum = { screen = Screen.Momentum(s.caseId) },
+                        onGoToCombinedSpeed = { navigate(Screen.CombinedSpeed(s.caseId)) },
+                        onGoToMomentum = { navigate(Screen.Momentum(s.caseId)) },
 
-                        onOpenCalculation = { calcId -> screen = Screen.CalculationDetail(s.caseId, calcId) },
+                        onOpenCalculation = { calcId -> navigate(Screen.CalculationDetail(s.caseId, calcId)) },
 
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) },
-                        onGoToUnitTools = { screen = Screen.UnitToolsCase(s.caseId) },
-
-                        )
+                        onGoToUnitTools = { navigate(Screen.UnitToolsCase(s.caseId)) }
+                    )
                 }
             }
 
@@ -227,12 +255,12 @@ private fun AppRoot() {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     VehicleDetailScreen(
                         caseFile = caseFile!!,
                         vehicleId = s.vehicleId,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onBack = { popBack() },
                         onSaveVehicle = { repo.updateVehicle(s.caseId, it) },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
@@ -244,12 +272,12 @@ private fun AppRoot() {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     PedestrianDetailScreen(
                         caseFile = caseFile!!,
                         unitId = s.unitId,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onBack = { popBack() },
                         onSavePedestrian = { repo.updatePedestrianUnit(s.caseId, it) }
                     )
                 }
@@ -260,11 +288,11 @@ private fun AppRoot() {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     CombinedSpeedScreen(
                         caseFile = caseFile!!,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
                 }
@@ -275,11 +303,11 @@ private fun AppRoot() {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     MomentumWizardScreen(
                         caseFile = caseFile!!,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
                 }
@@ -290,12 +318,12 @@ private fun AppRoot() {
                     value = repo.loadCase(s.caseId)
                 }
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     TireSizeCompareScreen(
                         caseFile = caseFile!!,
                         defaultVehicleId = caseFile!!.vehicles.firstOrNull()?.vehicleId,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
                 }
@@ -308,14 +336,14 @@ private fun AppRoot() {
                 val exists = caseFile?.calculations?.any { it.calcId == s.calcId } == true
 
                 if (caseFile == null) {
-                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else if (!exists) {
-                    screen = Screen.CaseDetail(s.caseId)
+                    navigate(Screen.CaseDetail(s.caseId), addToBackStack = false)
                 } else {
                     CalculationDetailScreen(
                         caseFile = caseFile!!,
                         calcId = s.calcId,
-                        onBack = { screen = Screen.CaseDetail(s.caseId) }
+                        onBack = { popBack() }
                     )
                 }
             }
