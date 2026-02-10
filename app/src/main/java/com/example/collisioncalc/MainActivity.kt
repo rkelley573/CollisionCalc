@@ -14,11 +14,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -73,10 +73,10 @@ private fun AppRoot() {
 
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
 
-    // NEW: simple manual back stack for “previous screen” behavior
+    // manual back stack
     val backStack = remember { mutableStateListOf<Screen>() }
 
-    // NEW: remember last selected tab per case so returning doesn’t reset to CRASH
+    // remember last selected tab per case
     val caseLastTab = remember { mutableStateMapOf<CaseId, CaseTab>() }
 
     fun navigate(to: Screen, addToBackStack: Boolean = true) {
@@ -143,7 +143,7 @@ private fun AppRoot() {
                 onBack = { popBack() },
                 onSaveCalculation = {
                     saveQuickCalc(it)
-                    navigate(Screen.QuickToolsCalcs, addToBackStack = false) // replace current
+                    navigate(Screen.QuickToolsCalcs, addToBackStack = false)
                 }
             )
 
@@ -152,7 +152,7 @@ private fun AppRoot() {
                 onBack = { popBack() },
                 onSaveCalculation = {
                     saveQuickCalc(it)
-                    navigate(Screen.QuickToolsCalcs, addToBackStack = false) // replace current
+                    navigate(Screen.QuickToolsCalcs, addToBackStack = false)
                 }
             )
 
@@ -179,21 +179,6 @@ private fun AppRoot() {
                 }
             }
 
-            is Screen.UnitToolsCase -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
-                }
-                if (caseFile == null) {
-                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
-                } else {
-                    UnitConverterScreen(
-                        caseFile = caseFile!!,
-                        onBack = { popBack() },
-                        onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
-                    )
-                }
-            }
-
             // ---------------- Case Workbook ----------------
 
             Screen.CaseList -> CaseListScreen(
@@ -207,22 +192,24 @@ private fun AppRoot() {
                 onBack = { popBack() },
                 onCreate = {
                     val c = repo.createCase(it)
-                    // Go straight to the case; do NOT keep NewCase on back stack
                     navigate(Screen.CaseDetail(c.caseId), addToBackStack = false)
                 }
             )
 
             is Screen.CaseDetail -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                // Load if missing; UI reads from Compose-observable cache
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
+
                 if (caseFile == null) {
                     LoadingScreen(onBack = { popBack(Screen.CaseList) })
                 } else {
                     val rememberedTab = caseLastTab[s.caseId] ?: CaseTab.CRASH
 
                     CaseDetailScreen(
-                        caseFile = caseFile!!,
+                        caseFile = caseFile,
                         onBack = { popBack() },
 
                         initialTab = rememberedTab,
@@ -251,14 +238,16 @@ private fun AppRoot() {
             }
 
             is Screen.VehicleDetail -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
+
                 if (caseFile == null) {
                     LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     VehicleDetailScreen(
-                        caseFile = caseFile!!,
+                        caseFile = caseFile,
                         vehicleId = s.vehicleId,
                         onBack = { popBack() },
                         onSaveVehicle = { repo.updateVehicle(s.caseId, it) },
@@ -268,14 +257,16 @@ private fun AppRoot() {
             }
 
             is Screen.PedestrianDetail -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
+
                 if (caseFile == null) {
                     LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     PedestrianDetailScreen(
-                        caseFile = caseFile!!,
+                        caseFile = caseFile,
                         unitId = s.unitId,
                         onBack = { popBack() },
                         onSavePedestrian = { repo.updatePedestrianUnit(s.caseId, it) }
@@ -284,14 +275,16 @@ private fun AppRoot() {
             }
 
             is Screen.CombinedSpeed -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
+
                 if (caseFile == null) {
                     LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     CombinedSpeedScreen(
-                        caseFile = caseFile!!,
+                        caseFile = caseFile,
                         onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
@@ -299,14 +292,33 @@ private fun AppRoot() {
             }
 
             is Screen.Momentum -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
+
                 if (caseFile == null) {
                     LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     MomentumWizardScreen(
-                        caseFile = caseFile!!,
+                        caseFile = caseFile,
+                        onBack = { popBack() },
+                        onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
+                    )
+                }
+            }
+
+            is Screen.UnitToolsCase -> {
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
+                }
+                val caseFile = repo.cachedCase(s.caseId)
+
+                if (caseFile == null) {
+                    LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
+                } else {
+                    UnitConverterScreen(
+                        caseFile = caseFile,
                         onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
@@ -314,15 +326,17 @@ private fun AppRoot() {
             }
 
             is Screen.TireCompareCase -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
+
                 if (caseFile == null) {
                     LoadingScreen(onBack = { popBack(Screen.CaseDetail(s.caseId)) })
                 } else {
                     TireSizeCompareScreen(
-                        caseFile = caseFile!!,
-                        defaultVehicleId = caseFile!!.vehicles.firstOrNull()?.vehicleId,
+                        caseFile = caseFile,
+                        defaultVehicleId = caseFile.vehicles.firstOrNull()?.vehicleId,
                         onBack = { popBack() },
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
                     )
@@ -330,9 +344,10 @@ private fun AppRoot() {
             }
 
             is Screen.CalculationDetail -> {
-                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
-                    value = repo.loadCase(s.caseId)
+                LaunchedEffect(s.caseId) {
+                    if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
+                val caseFile = repo.cachedCase(s.caseId)
                 val exists = caseFile?.calculations?.any { it.calcId == s.calcId } == true
 
                 if (caseFile == null) {
@@ -341,7 +356,7 @@ private fun AppRoot() {
                     navigate(Screen.CaseDetail(s.caseId), addToBackStack = false)
                 } else {
                     CalculationDetailScreen(
-                        caseFile = caseFile!!,
+                        caseFile = caseFile,
                         calcId = s.calcId,
                         onBack = { popBack() }
                     )

@@ -2,6 +2,7 @@ package com.example.collisioncalc.data
 
 import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import com.example.collisioncalc.data.db.CollisionCalcDatabase
 import com.example.collisioncalc.data.db.DbMappers
 import kotlinx.coroutines.*
@@ -21,8 +22,11 @@ class CaseRepository(
     private val _caseSummaries = mutableStateListOf<CaseSummary>()
     val caseSummaries: List<CaseSummary> get() = _caseSummaries
 
-    // Cache full cases once opened/loaded
-    private val caseCache = mutableMapOf<CaseId, CaseFile>()
+    /**
+     * IMPORTANT: This is now Compose-observable.
+     * Any updates to a case will trigger recomposition in any screen reading it.
+     */
+    private val caseCache = mutableStateMapOf<CaseId, CaseFile>()
 
     // Debounced autosave jobs per-case
     private val saveJobs = mutableMapOf<CaseId, Job>()
@@ -51,7 +55,13 @@ class CaseRepository(
     }
 
     /**
+     * Read a case from cache (Compose will recompose when this entry changes).
+     */
+    fun cachedCase(caseId: CaseId): CaseFile? = caseCache[caseId]
+
+    /**
      * Loads the full case from Room (and caches it). Safe to call repeatedly.
+     * Returns cached value if already loaded.
      */
     suspend fun loadCase(caseId: CaseId): CaseFile? {
         caseCache[caseId]?.let { return it }
@@ -83,7 +93,9 @@ class CaseRepository(
                 attribUnits = attribUnits,
                 attribVehicles = attribVehicles
             ).also { loaded ->
-                caseCache[caseId] = loaded
+                withContext(Dispatchers.Main) {
+                    caseCache[caseId] = loaded
+                }
             }
         }
     }
