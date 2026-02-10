@@ -6,12 +6,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.example.collisioncalc.data.CaseFile
+import com.example.collisioncalc.data.CaseSummary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaseListScreen(
-    cases: List<CaseFile>,
+    cases: List<CaseSummary>,
     onBack: () -> Unit,
     onNewCase: () -> Unit,
     onOpenCase: (caseId: String) -> Unit
@@ -44,7 +44,7 @@ fun CaseListScreen(
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(c.serviceNumber, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "Vehicles: ${c.vehicles.size} • Calculations: ${c.calculations.size} • Notes: ${c.notes.size}",
+                                "Vehicles: ${c.vehiclesCount} • Units: ${c.unitsCount} • Calculations: ${c.calculationsCount} • Notes: ${c.notesCount}",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }

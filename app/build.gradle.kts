@@ -1,13 +1,16 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+
+    // ✅ Use KSP instead of kapt
+    id("com.google.devtools.ksp")
 }
 
 android {
     namespace = "com.example.collisioncalc"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
+
 
     defaultConfig {
         applicationId = "com.example.collisioncalc"
@@ -28,10 +31,16 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    kotlin {
+        jvmToolchain(11)
+    }
+
+
     buildFeatures {
         compose = true
     }
@@ -53,7 +62,9 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
     implementation("androidx.compose.material:material-icons-extended")
+
     // Word (.docx)
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("org.apache.poi:poi:5.2.5")
@@ -61,4 +72,10 @@ dependencies {
     // PDF
     implementation("com.itextpdf:itext7-core:7.2.5")
 
+    // ✅ Room (autosave persistence)
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 }
+
+

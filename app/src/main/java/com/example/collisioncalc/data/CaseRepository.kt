@@ -1,13 +1,92 @@
 package com.example.collisioncalc.data
 
+import android.content.Context
 import androidx.compose.runtime.mutableStateListOf
+import com.example.collisioncalc.data.db.CollisionCalcDatabase
+import com.example.collisioncalc.data.db.DbMappers
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collectLatest
 import java.util.UUID
 
-class CaseRepository {
-    private val _cases = mutableStateListOf<CaseFile>()
-    val cases: List<CaseFile> get() = _cases
+class CaseRepository(
+    context: Context,
+    private val scope: CoroutineScope
+) {
+    private val db = CollisionCalcDatabase.get(context)
+    private val dao = db.caseDao()
 
-    fun getCase(caseId: CaseId): CaseFile? = _cases.firstOrNull { it.caseId == caseId }
+    // Debounce window (tune anytime)
+    private val AUTOSAVE_DEBOUNCE_MS = 400L
+
+    private val _caseSummaries = mutableStateListOf<CaseSummary>()
+    val caseSummaries: List<CaseSummary> get() = _caseSummaries
+
+    // Cache full cases once opened/loaded
+    private val caseCache = mutableMapOf<CaseId, CaseFile>()
+
+    // Debounced autosave jobs per-case
+    private val saveJobs = mutableMapOf<CaseId, Job>()
+
+    init {
+        // Live case list (counts)
+        scope.launch(Dispatchers.IO) {
+            dao.observeCases().collectLatest { rows ->
+                val summaries = rows.map {
+                    CaseSummary(
+                        caseId = it.caseId,
+                        serviceNumber = it.serviceNumber,
+                        createdAtEpochMs = it.createdAtEpochMs,
+                        vehiclesCount = it.vehiclesCount,
+                        unitsCount = it.unitsCount,
+                        notesCount = it.notesCount,
+                        calculationsCount = it.calculationsCount
+                    )
+                }
+                withContext(Dispatchers.Main) {
+                    _caseSummaries.clear()
+                    _caseSummaries.addAll(summaries)
+                }
+            }
+        }
+    }
+
+    /**
+     * Loads the full case from Room (and caches it). Safe to call repeatedly.
+     */
+    suspend fun loadCase(caseId: CaseId): CaseFile? {
+        caseCache[caseId]?.let { return it }
+
+        return withContext(Dispatchers.IO) {
+            val row = dao.getCase(caseId) ?: return@withContext null
+
+            val vehicles = dao.getVehicles(caseId)
+            val occupants = if (vehicles.isEmpty()) emptyList() else dao.getOccupants(vehicles.map { it.vehicleId })
+            val units = dao.getUnits(caseId)
+            val notes = dao.getNotes(caseId)
+
+            val calcs = dao.getCalcs(caseId)
+            val calcIds = calcs.map { it.calcId }
+            val values = if (calcIds.isEmpty()) emptyList() else dao.getCalcValues(calcIds)
+            val steps = if (calcIds.isEmpty()) emptyList() else dao.getCalcSteps(calcIds)
+            val attribUnits = if (calcIds.isEmpty()) emptyList() else dao.getCalcAttribUnits(calcIds)
+            val attribVehicles = if (calcIds.isEmpty()) emptyList() else dao.getCalcAttribVehicles(calcIds)
+
+            DbMappers.rowsToCase(
+                caseRow = row,
+                vehicles = vehicles,
+                occupants = occupants,
+                units = units,
+                notes = notes,
+                calcs = calcs,
+                values = values,
+                steps = steps,
+                attribUnits = attribUnits,
+                attribVehicles = attribVehicles
+            ).also { loaded ->
+                caseCache[caseId] = loaded
+            }
+        }
+    }
 
     fun createCase(serviceNumber: String, location: String = "", caseNotes: String = ""): CaseFile {
         val v1 = Vehicle(label = "Vehicle 1")
@@ -24,7 +103,11 @@ class CaseRepository {
             vehicles = listOf(v1, v2),
             units = listOf(u1, u2)
         )
-        _cases.add(0, c)
+
+        caseCache[c.caseId] = c
+
+        // Save immediately so it appears in list right away.
+        persistNow(c)
         return c
     }
 
@@ -46,17 +129,12 @@ class CaseRepository {
 
     fun updateVehicle(caseId: CaseId, updated: Vehicle) {
         updateCase(caseId) { case ->
-            case.copy(
-                vehicles = case.vehicles.map { if (it.vehicleId == updated.vehicleId) updated else it }
-            )
+            case.copy(vehicles = case.vehicles.map { if (it.vehicleId == updated.vehicleId) updated else it })
         }
     }
 
     // ---------------- Calculations ----------------
 
-    /**
-     * Save calc, normalize id/timestamp if needed.
-     */
     fun saveCalculation(caseId: CaseId, calc: SavedCalculation) {
         val now = System.currentTimeMillis()
         val normalized = calc.copy(
@@ -71,7 +149,7 @@ class CaseRepository {
     // ---------------- Units ----------------
 
     fun addVehicleUnit(caseId: CaseId) {
-        val case = getCase(caseId) ?: return
+        val case = caseCache[caseId] ?: return
         val next = (case.units.count { it is VehicleUnit } + 1).coerceAtLeast(1)
 
         val v = Vehicle(label = "Vehicle $next")
@@ -86,22 +164,16 @@ class CaseRepository {
     }
 
     fun addPedestrianUnit(caseId: CaseId) {
-        val case = getCase(caseId) ?: return
+        val case = caseCache[caseId] ?: return
         val next = (case.units.count { it is PedestrianUnit } + 1).coerceAtLeast(1)
         val unit = PedestrianUnit(label = "Pedestrian $next")
         updateCase(caseId) { it.copy(units = it.units + unit) }
     }
 
-    /**
-     * Update (save) a pedestrian unit’s details.
-     * This ONLY touches units[].
-     */
     fun updatePedestrianUnit(caseId: CaseId, updated: PedestrianUnit) {
         updateCase(caseId) { case ->
             case.copy(
-                units = case.units.map { u ->
-                    if (u.unitId == updated.unitId) updated else u
-                }
+                units = case.units.map { u -> if (u.unitId == updated.unitId) updated else u }
             )
         }
     }
@@ -128,20 +200,46 @@ class CaseRepository {
             val newUnits = case.units.filterNot { it.unitId == unitId }
 
             val newCalcs = case.calculations.map { c ->
-                if (unitId in c.attributedUnitIds) {
-                    c.copy(attributedUnitIds = (c.attributedUnitIds - unitId))
-                } else c
+                if (unitId in c.attributedUnitIds) c.copy(attributedUnitIds = (c.attributedUnitIds - unitId))
+                else c
             }
 
             case.copy(units = newUnits, calculations = newCalcs)
         }
     }
 
-    // ---------------- helpers ----------------
+    // ---------------- persistence helpers ----------------
 
     private fun updateCase(caseId: CaseId, transform: (CaseFile) -> CaseFile) {
-        val idx = _cases.indexOfFirst { it.caseId == caseId }
-        if (idx == -1) return
-        _cases[idx] = transform(_cases[idx])
+        val current = caseCache[caseId] ?: return
+        val updated = transform(current)
+        caseCache[caseId] = updated
+        scheduleAutosave(updated)
+    }
+
+    private fun scheduleAutosave(caseFile: CaseFile) {
+        saveJobs[caseFile.caseId]?.cancel()
+        saveJobs[caseFile.caseId] = scope.launch {
+            delay(AUTOSAVE_DEBOUNCE_MS)
+            persistNow(caseFile)
+        }
+    }
+
+    private fun persistNow(caseFile: CaseFile) {
+        val snapshot = DbMappers.caseToRows(caseFile)
+        scope.launch(Dispatchers.IO) {
+            dao.replaceCaseSnapshot(
+                caseRow = snapshot.caseRow,
+                vehicles = snapshot.vehicles,
+                occupants = snapshot.occupants,
+                units = snapshot.units,
+                notes = snapshot.notes,
+                calcs = snapshot.calcs,
+                values = snapshot.values,
+                steps = snapshot.steps,
+                attribUnits = snapshot.attribUnits,
+                attribVehicles = snapshot.attribVehicles
+            )
+        }
     }
 }
