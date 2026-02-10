@@ -13,6 +13,9 @@ import java.io.OutputStream
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 
 object CaseExporter {
@@ -44,11 +47,19 @@ object CaseExporter {
     }
 
     private data class Payload(
-        val headerLines: List<String>,
+        val agencyName: String,
+        val reportTitle: String,
+        val serviceNumber: String,
+        val reportDateIso: String,
+        val preparedBy: String,
+        val reviewedBy: String,
+        val generatedLine: String,
+
         val crashLines: List<String>,
         val unitSections: List<UnitSection>,
         val calcSections: List<CalcSection>,
         val caseNotesLines: List<String>,
+
         val showFullWork: Boolean
     )
 
@@ -73,26 +84,22 @@ object CaseExporter {
     )
 
     private fun buildPayload(caseFile: CaseFile, meta: ExportMeta): Payload {
-        val header = buildList {
-            add(meta.agencyName)
-            add(meta.reportTitle)
-            add("Service #: ${caseFile.serviceNumber}")
-            add("Report Date: ${meta.reportDateIso}")
-            if (meta.preparedBy.isNotBlank()) add("Prepared By: ${meta.preparedBy}")
-            if (meta.reviewedBy.isNotBlank()) add("Reviewed By: ${meta.reviewedBy}")
-        }
-
-        val crash = buildCrashLines(caseFile)
-        val unitSections = buildUnitSections(caseFile)
-        val calcSections = buildCalcSections(caseFile, meta.showFullWork)
-        val caseNotesLines = buildCaseNotesLines(caseFile)
+        val generated = "Generated: ${formatEpoch(System.currentTimeMillis())} (Local)"
 
         return Payload(
-            headerLines = header,
-            crashLines = crash,
-            unitSections = unitSections,
-            calcSections = calcSections,
-            caseNotesLines = caseNotesLines,
+            agencyName = meta.agencyName.ifBlank { "Agency" },
+            reportTitle = meta.reportTitle.ifBlank { "Collision Reconstruction Worksheet" },
+            serviceNumber = caseFile.serviceNumber.ifBlank { "—" },
+            reportDateIso = meta.reportDateIso.ifBlank { "—" },
+            preparedBy = meta.preparedBy,
+            reviewedBy = meta.reviewedBy,
+            generatedLine = generated,
+
+            crashLines = buildCrashLines(caseFile),
+            unitSections = buildUnitSections(caseFile),
+            calcSections = buildCalcSections(caseFile, meta.showFullWork),
+            caseNotesLines = buildCaseNotesLines(caseFile),
+
             showFullWork = meta.showFullWork
         )
     }
@@ -168,13 +175,13 @@ object CaseExporter {
                     val seat = o.seatingPosition.ifBlank { "—" }
                     val dob = o.dobIso.ifBlank { "—" }
                     val belt = yn(o.seatbeltWorn)
+
                     add("    (${idx + 1}) $nameLine")
                     add("      Seating: $seat")
                     add("      DOB: $dob")
                     add("      Seatbelt: $belt")
                     if (o.phone.isNotBlank()) add("      Phone: ${o.phone}")
 
-                    // If you filled driver fields, export them (regardless of seating label)
                     val hasId = o.idNumber.isNotBlank() || o.idClass.isNotBlank() || o.idRestrictions.isNotBlank()
                     if (hasId) {
                         add("      ID #: ${o.idNumber.ifBlank { "—" }}")
@@ -208,7 +215,6 @@ object CaseExporter {
                             add("  VIN: ${v.vin.ifBlank { "—" }}")
                             add("  Weight: ${v.weightLb?.let { fmt3(it) } ?: "—"} lb")
 
-                            // NEW: Insurance + Occupants
                             addAll(insuranceLines(v.insurance))
                             addAll(occupantLines(v.occupants))
 
@@ -302,7 +308,7 @@ object CaseExporter {
     }
 
     /* ---------------------------
-       PDF
+       PDF (Option A: Cover -> Crash Info; NO redundant Case Summary page)
     ---------------------------- */
 
     private fun writePdf(payload: Payload, out: OutputStream) {
@@ -313,40 +319,33 @@ object CaseExporter {
         val margin = 40
         val lineGap = 16
 
-        // Court-friendly: consistent header/footer on every content page.
         val headerTop = 28
         val footerBottom = 24
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f }
-
+        val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f }
         val smallPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 9f }
-
-        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 16f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
 
         val coverTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = 22f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-
         val coverSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = 14f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
-
-        val hPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val sectionTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = 13f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        val boldBodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 11f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         }
 
         val sectionBandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            // Light gray band
             color = 0xFFEFEFEF.toInt()
             style = Paint.Style.FILL
         }
-
         val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFFB0B0B0.toInt()
             strokeWidth = 1f
@@ -358,29 +357,105 @@ object CaseExporter {
 
         var pageNumber = 1
 
-        // "Cover" is page 1 but does not show the running header.
+        // ---------------------------
+        // COVER PAGE (no running header)
+        // ---------------------------
         var page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
         var canvas = page.canvas
-        var y = margin.toFloat()
 
-        val agency = payload.headerLines.getOrNull(0) ?: "Agency"
-        val reportTitle = payload.headerLines.getOrNull(1) ?: "Collision Reconstruction Worksheet"
-        val serviceLine = payload.headerLines.firstOrNull { it.startsWith("Service #") } ?: ""
-        val reportDateLine = payload.headerLines.firstOrNull { it.startsWith("Report Date") } ?: ""
-        val preparedByLine = payload.headerLines.firstOrNull { it.startsWith("Prepared By") } ?: ""
-        val reviewedByLine = payload.headerLines.firstOrNull { it.startsWith("Reviewed By") } ?: ""
-        val generatedLine = "Generated: ${formatEpoch(System.currentTimeMillis())} (Local)"
+        val centerX = pageWidth / 2f
+        var cy = 140f
+
+        fun drawCentered(text: String, p: Paint) {
+            val w = p.measureText(text)
+            canvas.drawText(text, centerX - w / 2f, cy, p)
+            cy += (p.textSize + 12f)
+        }
+
+        drawCentered(payload.agencyName, coverSubPaint)
+        drawCentered(payload.reportTitle, coverTitlePaint)
+
+        cy += 8f
+        drawCentered("Service #: ${payload.serviceNumber}", coverSubPaint)
+        drawCentered("Report Date: ${payload.reportDateIso}", bodyPaint)
+
+        if (payload.preparedBy.isNotBlank()) drawCentered("Prepared By: ${payload.preparedBy}", bodyPaint)
+        if (payload.reviewedBy.isNotBlank()) drawCentered("Reviewed By: ${payload.reviewedBy}", bodyPaint)
+        drawCentered(payload.generatedLine, bodyPaint)
+
+        // Disclaimer (wrapped)
+        val disclaimer =
+            "This document is a working collision-reconstruction worksheet generated by CollisionCalc. Values are based on entered assumptions and should be independently verified."
+        var y = 360f
+
+        fun ensureSpace(linesNeeded: Int) {
+            val needed = linesNeeded * lineGap
+            if (y + needed > (pageHeight - margin - 120)) {
+                // cover should never overflow; shrink by forcing less text
+            }
+        }
+
+        fun drawWrapped(text: String, paintUse: Paint = bodyPaint, indent: Int = 0) {
+            val maxWidth = pageWidth - margin * 2 - indent
+            val words = text.split(" ")
+            var line = ""
+            for (w in words) {
+                val candidate = if (line.isEmpty()) w else "$line $w"
+                if (paintUse.measureText(candidate) <= maxWidth) {
+                    line = candidate
+                } else {
+                    ensureSpace(1)
+                    canvas.drawText(line, (margin + indent).toFloat(), y, paintUse)
+                    y += lineGap
+                    line = w
+                }
+            }
+            if (line.isNotEmpty()) {
+                ensureSpace(1)
+                canvas.drawText(line, (margin + indent).toFloat(), y, paintUse)
+                y += lineGap
+            }
+        }
+
+        drawWrapped(disclaimer, paintUse = bodyPaint)
+
+        // Signature lines
+        y = (pageHeight - 220).toFloat()
+        fun sigLine(label: String) {
+            canvas.drawText(label, margin.toFloat(), y, bodyPaint)
+            y += 18f
+            canvas.drawLine(margin.toFloat(), y, (pageWidth - margin).toFloat(), y, dividerPaint)
+            y += 24f
+        }
+        sigLine("Prepared By")
+        sigLine("Reviewed By")
+
+        doc.finishPage(page)
+
+        // ---------------------------
+        // CONTENT PAGES (with running header/footer)
+        // ---------------------------
+        pageNumber++
+        page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+        canvas = page.canvas
+        y = contentTop.toFloat()
 
         fun drawHeaderFooter() {
-            // Header line
-            val headerY = (margin - 14).coerceAtLeast(12).toFloat()
-            canvas.drawText(agency, margin.toFloat(), headerY, smallPaint)
-            canvas.drawText(serviceLine, (pageWidth - margin - smallPaint.measureText(serviceLine)).toFloat(), headerY, smallPaint)
+            val headerY1 = (margin - 14).coerceAtLeast(12).toFloat()
+            val headerY2 = (margin - 2).coerceAtLeast(22).toFloat()
 
-            val header2Y = (margin - 2).coerceAtLeast(22).toFloat()
-            canvas.drawText(reportTitle, margin.toFloat(), header2Y, smallPaint)
+            val left1 = payload.agencyName
+            val right1 = "Service #: ${payload.serviceNumber}"
+            canvas.drawText(left1, margin.toFloat(), headerY1, smallPaint)
+            canvas.drawText(
+                right1,
+                (pageWidth - margin - smallPaint.measureText(right1)).toFloat(),
+                headerY1,
+                smallPaint
+            )
 
-            // Divider under header
+            canvas.drawText(payload.reportTitle, margin.toFloat(), headerY2, smallPaint)
+
             canvas.drawLine(
                 margin.toFloat(),
                 (margin + 2).toFloat(),
@@ -389,14 +464,17 @@ object CaseExporter {
                 dividerPaint
             )
 
-            // Footer
             val footerY = (pageHeight - margin + 10).toFloat()
-            val left = "CollisionCalc Export"
-            val right = "Page $pageNumber"
-            canvas.drawText(left, margin.toFloat(), footerY, smallPaint)
-            canvas.drawText(right, (pageWidth - margin - smallPaint.measureText(right)).toFloat(), footerY, smallPaint)
+            val leftF = "CollisionCalc Export"
+            val rightF = "Page $pageNumber"
+            canvas.drawText(leftF, margin.toFloat(), footerY, smallPaint)
+            canvas.drawText(
+                rightF,
+                (pageWidth - margin - smallPaint.measureText(rightF)).toFloat(),
+                footerY,
+                smallPaint
+            )
 
-            // Divider over footer
             canvas.drawLine(
                 margin.toFloat(),
                 (pageHeight - margin - footerBottom).toFloat(),
@@ -415,12 +493,12 @@ object CaseExporter {
             drawHeaderFooter()
         }
 
-        fun ensureSpace(linesNeeded: Int) {
+        fun ensureContentSpace(linesNeeded: Int) {
             val needed = linesNeeded * lineGap
             if (y + needed > contentBottom) newPage()
         }
 
-        fun drawWrapped(text: String, paintUse: Paint = paint, indent: Int = 0) {
+        fun drawWrappedContent(text: String, paintUse: Paint = bodyPaint, indent: Int = 0) {
             val maxWidth = pageWidth - margin * 2 - indent
             val words = text.split(" ")
             var line = ""
@@ -429,22 +507,21 @@ object CaseExporter {
                 if (paintUse.measureText(candidate) <= maxWidth) {
                     line = candidate
                 } else {
-                    ensureSpace(1)
-                    canvas.drawText(line, (margin + indent).toFloat(), y.toFloat(), paintUse)
+                    ensureContentSpace(1)
+                    canvas.drawText(line, (margin + indent).toFloat(), y, paintUse)
                     y += lineGap
                     line = w
                 }
             }
             if (line.isNotEmpty()) {
-                ensureSpace(1)
-                canvas.drawText(line, (margin + indent).toFloat(), y.toFloat(), paintUse)
+                ensureContentSpace(1)
+                canvas.drawText(line, (margin + indent).toFloat(), y, paintUse)
                 y += lineGap
             }
         }
 
         fun sectionHeader(text: String) {
-            ensureSpace(3)
-            // Shaded band
+            ensureContentSpace(3)
             val bandTop = y - 12
             val bandBottom = y + 10
             canvas.drawRect(
@@ -454,118 +531,62 @@ object CaseExporter {
                 bandBottom.toFloat(),
                 sectionBandPaint
             )
-            canvas.drawText(text, margin.toFloat(), y.toFloat(), hPaint)
+            canvas.drawText(text, margin.toFloat(), y, sectionTitlePaint)
             y += (lineGap + 6)
         }
 
-        // ---------------------------
-        // COVER PAGE (court-friendly)
-        // ---------------------------
-        // Centered title block
-        val centerX = pageWidth / 2f
-        var cy = 140f
-        fun drawCentered(text: String, p: Paint) {
-            val w = p.measureText(text)
-            canvas.drawText(text, centerX - w / 2f, cy, p)
-            cy += (p.textSize + 12f)
-        }
-
-        drawCentered(agency, coverSubPaint)
-        drawCentered(reportTitle, coverTitlePaint)
-
-        cy += 8f
-        if (serviceLine.isNotBlank()) drawCentered(serviceLine, coverSubPaint)
-        if (reportDateLine.isNotBlank()) drawCentered(reportDateLine, paint)
-        if (preparedByLine.isNotBlank()) drawCentered(preparedByLine, paint)
-        if (reviewedByLine.isNotBlank()) drawCentered(reviewedByLine, paint)
-        drawCentered(generatedLine, paint)
-
-        cy += 30f
-        val disclaimer = "This document is a working collision-reconstruction worksheet generated by CollisionCalc. Values are based on entered assumptions and should be independently verified."
-        // Use drawWrapped for disclaimer using a temporary y
-        y = (cy).coerceAtLeast(340f)
-        val oldY = y
-        // Simple wrap using existing helper
-        drawWrapped(disclaimer, paintUse = paint)
-        y = oldY
-
-        // Signature block
-        y = (pageHeight - 220).toFloat()
-        fun sigLine(label: String) {
-            canvas.drawText(label, margin.toFloat(), y, paint)
-            y += 18f
-            canvas.drawLine(margin.toFloat(), y, (pageWidth - margin).toFloat(), y, dividerPaint)
-            y += 24f
-        }
-        sigLine("Prepared By")
-        sigLine("Reviewed By")
-
-        doc.finishPage(page)
-
-        // ---------------------------
-        // CONTENT PAGES
-        // ---------------------------
-        pageNumber++
-        page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
-        canvas = page.canvas
-        y = contentTop.toFloat()
+        // Start first content page with header/footer
         drawHeaderFooter()
 
-        // Case Summary (header lines after agency/title)
-        sectionHeader("Case Summary")
-        payload.headerLines.drop(2).forEach { drawWrapped(it) }
-        drawWrapped(generatedLine)
-
-        // Crash Info starts a new page (court-friendly separation)
-        newPage()
+        // -------- Option A: Go straight to Crash Info (no Case Summary) --------
         sectionHeader("Crash Info")
-        payload.crashLines.drop(1).forEach { drawWrapped(it) }
+        payload.crashLines.drop(1).forEach { drawWrappedContent(it) }
 
-        // Units: each unit on its own page for readability
+        // Units: each unit on its own page
         if (payload.unitSections.isNotEmpty()) {
             payload.unitSections.forEach { u ->
                 newPage()
                 sectionHeader("Unit Information")
-                drawWrapped(u.title, paintUse = hPaint)
-                u.lines.forEach { drawWrapped(it, indent = 16) }
+                drawWrappedContent(u.title, paintUse = sectionTitlePaint)
+                u.lines.forEach { drawWrappedContent(it, indent = 16) }
             }
         }
 
-        // Calculations: each calc section on its own page; each calculation starts with a block header
+        // Calculations: each calc section on its own page
         if (payload.calcSections.isEmpty()) {
             newPage()
             sectionHeader("Calculations")
-            drawWrapped("No calculations.")
+            drawWrappedContent("No calculations.")
         } else {
             payload.calcSections.forEach { sec ->
                 newPage()
                 sectionHeader("Calculations")
-                drawWrapped(sec.title, paintUse = hPaint)
+                drawWrappedContent(sec.title, paintUse = sectionTitlePaint)
 
                 sec.calcs.forEachIndexed { idx, c ->
-                    ensureSpace(3)
-                    drawWrapped("Calculation ${idx + 1}: ${c.title}", paintUse = paintBold())
-                    drawWrapped(c.whenLine, indent = 16)
+                    ensureContentSpace(3)
+                    drawWrappedContent("Calculation ${idx + 1}: ${c.title}", paintUse = boldBodyPaint)
+                    drawWrappedContent(c.whenLine, indent = 16)
 
                     c.equation?.let { eq ->
-                        drawWrapped("Equation:", indent = 16)
-                        drawWrapped(eq, indent = 32)
+                        drawWrappedContent("Equation:", indent = 16, paintUse = boldBodyPaint)
+                        drawWrappedContent(eq, indent = 32)
                     }
 
-                    drawWrapped("Outputs:", indent = 16)
-                    c.outputs.forEach { drawWrapped("• $it", indent = 32) }
+                    drawWrappedContent("Outputs:", indent = 16, paintUse = boldBodyPaint)
+                    c.outputs.forEach { drawWrappedContent("• $it", indent = 32) }
 
-                    drawWrapped("Inputs:", indent = 16)
-                    c.inputs.forEach { drawWrapped("• $it", indent = 32) }
+                    drawWrappedContent("Inputs:", indent = 16, paintUse = boldBodyPaint)
+                    c.inputs.forEach { drawWrappedContent("• $it", indent = 32) }
 
                     if (payload.showFullWork) {
-                        drawWrapped("Work Shown:", indent = 16)
-                        c.work.forEach { drawWrapped(it, indent = 32) }
+                        drawWrappedContent("Work Shown:", indent = 16, paintUse = boldBodyPaint)
+                        c.work.forEach { drawWrappedContent(it, indent = 32) }
                     }
 
                     c.calcNotes?.let { n ->
-                        drawWrapped("Calc Notes:", indent = 16)
-                        drawWrapped(n, indent = 32)
+                        drawWrappedContent("Calc Notes:", indent = 16, paintUse = boldBodyPaint)
+                        drawWrappedContent(n, indent = 32)
                     }
 
                     y += 10
@@ -573,11 +594,11 @@ object CaseExporter {
             }
         }
 
-        // Case Notes on its own page
+        // Case Notes: own page
         newPage()
         sectionHeader("Case Notes")
         payload.caseNotesLines.drop(1).forEach { line ->
-            if (line.isBlank()) y += 6 else drawWrapped(line)
+            if (line.isBlank()) y += 6 else drawWrappedContent(line)
         }
 
         doc.finishPage(page)
@@ -586,7 +607,7 @@ object CaseExporter {
     }
 
     /* ---------------------------
-       DOCX
+       DOCX (Option A: remove redundant Case Summary section)
     ---------------------------- */
 
     private fun writeDocx(payload: Payload, out: OutputStream) {
@@ -632,35 +653,21 @@ object CaseExporter {
             r.setText(text)
         }
 
-        fun keyValueTable(lines: List<String>) {
-            // Expect "Key: Value" format.
-            val table = doc.createTable(lines.size.coerceAtLeast(1), 2)
-            lines.forEachIndexed { i, ln ->
-                val parts = ln.split(":", limit = 2)
-                val k = parts.getOrNull(0)?.trim().orEmpty()
-                val v = parts.getOrNull(1)?.trim().orEmpty()
-                table.getRow(i).getCell(0).text = k
-                table.getRow(i).getCell(1).text = v
-            }
-        }
-
         fun bulletLine(text: String) {
             para("• $text", bold = false, size = 11)
         }
 
-        val agency = payload.headerLines.getOrNull(0) ?: "Agency"
-        val reportTitle = payload.headerLines.getOrNull(1) ?: "Collision Reconstruction Worksheet"
-        val metaLines = payload.headerLines.drop(2)
-        val generatedLine = "Generated: ${formatEpoch(System.currentTimeMillis())} (Local)"
-
         // ---------------------------
-        // COVER PAGE
+        // COVER PAGE (+ TOC on cover)
         // ---------------------------
-        para(agency, bold = true, size = 16, align = ParagraphAlignment.CENTER)
-        para(reportTitle, bold = true, size = 22, align = ParagraphAlignment.CENTER)
+        para(payload.agencyName, bold = true, size = 16, align = ParagraphAlignment.CENTER)
+        para(payload.reportTitle, bold = true, size = 22, align = ParagraphAlignment.CENTER)
         spacer(1)
-        metaLines.forEach { para(it, size = 12, align = ParagraphAlignment.CENTER) }
-        para(generatedLine, size = 11, align = ParagraphAlignment.CENTER)
+        para("Service #: ${payload.serviceNumber}", bold = true, size = 12, align = ParagraphAlignment.CENTER)
+        para("Report Date: ${payload.reportDateIso}", size = 12, align = ParagraphAlignment.CENTER)
+        if (payload.preparedBy.isNotBlank()) para("Prepared By: ${payload.preparedBy}", size = 12, align = ParagraphAlignment.CENTER)
+        if (payload.reviewedBy.isNotBlank()) para("Reviewed By: ${payload.reviewedBy}", size = 12, align = ParagraphAlignment.CENTER)
+        para(payload.generatedLine, size = 11, align = ParagraphAlignment.CENTER)
         spacer(2)
         para(
             "This document is a working collision-reconstruction worksheet generated by CollisionCalc. Values are based on entered assumptions and should be independently verified.",
@@ -672,10 +679,8 @@ object CaseExporter {
         spacer(1)
         para("Reviewed By: ________________________________   Date: ____________", size = 11, align = ParagraphAlignment.CENTER)
 
-        // Manual TOC (court-friendly structure)
         spacer(2)
         subsectionTitle("Table of Contents")
-        bulletLine("Case Summary")
         bulletLine("Crash Info")
         if (payload.unitSections.isNotEmpty()) bulletLine("Unit Information (one section per unit)")
         bulletLine("Calculations (grouped by unit/section)")
@@ -684,16 +689,7 @@ object CaseExporter {
         pageBreak()
 
         // ---------------------------
-        // CASE SUMMARY
-        // ---------------------------
-        sectionTitle("Case Summary")
-        keyValueTable(metaLines + listOf(generatedLine))
-        spacer(1)
-
-        pageBreak()
-
-        // ---------------------------
-        // CRASH INFO
+        // CRASH INFO (Option A: first content section)
         // ---------------------------
         sectionTitle("Crash Info")
         payload.crashLines.drop(1).forEach { bulletLine(it) }
@@ -763,13 +759,6 @@ object CaseExporter {
 
         doc.write(out)
         doc.close()
-    }
-
-    private fun paintBold(): Paint {
-        return Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 11f
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
     }
 
     private fun formatEpoch(epochMs: Long): String =
