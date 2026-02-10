@@ -59,6 +59,8 @@ private sealed class Screen {
     data class Momentum(val caseId: CaseId) : Screen()
     data class TireCompareCase(val caseId: CaseId) : Screen()
     data class CalculationDetail(val caseId: CaseId, val calcId: CalcId) : Screen()
+    data class UnitToolsCase(val caseId: CaseId) : Screen()
+
 }
 
 @Composable
@@ -153,6 +155,21 @@ private fun AppRoot() {
                     )
                 }
             }
+            is Screen.UnitToolsCase -> {
+                val caseFile by produceState<CaseFile?>(initialValue = null, s.caseId) {
+                    value = repo.loadCase(s.caseId)
+                }
+                if (caseFile == null) {
+                    LoadingScreen(onBack = { screen = Screen.CaseDetail(s.caseId) })
+                } else {
+                    UnitConverterScreen(
+                        caseFile = caseFile!!,
+                        onBack = { screen = Screen.CaseDetail(s.caseId) },
+                        onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
+                    )
+                }
+            }
+
 
             // ---------------- Case Workbook ----------------
 
@@ -198,8 +215,10 @@ private fun AppRoot() {
 
                         onOpenCalculation = { calcId -> screen = Screen.CalculationDetail(s.caseId, calcId) },
 
-                        onSaveCalculation = { repo.saveCalculation(s.caseId, it) }
-                    )
+                        onSaveCalculation = { repo.saveCalculation(s.caseId, it) },
+                        onGoToUnitTools = { screen = Screen.UnitToolsCase(s.caseId) },
+
+                        )
                 }
             }
 

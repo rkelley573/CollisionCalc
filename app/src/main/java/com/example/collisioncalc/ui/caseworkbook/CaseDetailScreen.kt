@@ -31,6 +31,8 @@ fun CaseDetailScreen(
     // Tools
     onGoToCombinedSpeed: () -> Unit,
     onGoToMomentum: () -> Unit,
+    onGoToUnitTools: () -> Unit,
+
 
     // Calcs
     onOpenCalculation: (calcId: CalcId) -> Unit,
@@ -98,7 +100,7 @@ fun CaseDetailScreen(
                         onOpenCalculation = onOpenCalculation,
                         onGoToCombinedSpeed = onGoToCombinedSpeed,
                         onGoToMomentum = onGoToMomentum,
-                        onOpenUnitTools = { showUnitTools = true }
+                        onOpenUnitTools = onGoToUnitTools
                     )
 
                     CaseTab.NOTES -> NotesTabContent(

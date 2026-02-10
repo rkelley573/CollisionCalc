@@ -2,6 +2,8 @@ package com.example.collisioncalc.ui.caseworkbook
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -13,9 +15,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-
 
 private enum class CalcFilterMode { ALL, UNASSIGNED, UNIT }
 
@@ -69,7 +68,7 @@ private fun outputsPreview(c: SavedCalculation): String {
 }
 
 /* ---------------------------
-   CALCS TAB (Lazy + derivedStateOf)
+   CALCS TAB
 ---------------------------- */
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -117,6 +116,7 @@ fun CalcsTabContent(
         }
     }
 
+    // ✅ Tools launcher UI (THIS is what was missing from your list)
     val toolsRow: @Composable () -> Unit = {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             Button(onClick = onGoToCombinedSpeed, modifier = Modifier.weight(1f)) { Text("Combined Speed") }
@@ -132,15 +132,14 @@ fun CalcsTabContent(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item {
-            CrashSummaryCard(caseFile.crashInfo)
-        }
+        item { CrashSummaryCard(caseFile.crashInfo) }
+
+        // ✅ Always show launch buttons so you can run tools even with 0 calcs
+        item { toolsRow() }
 
         item { HorizontalDivider() }
 
-        item {
-            Text("Filter", style = MaterialTheme.typography.titleSmall)
-        }
+        item { Text("Filter", style = MaterialTheme.typography.titleSmall) }
 
         item {
             Row(
@@ -180,49 +179,64 @@ fun CalcsTabContent(
             )
         }
 
-        itemsIndexed(
-            items = filteredCalcs,
-            key = { _, c -> c.calcId }
-        ) { _, c ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onOpenCalculation(c.calcId) }
-            ) {
-                Column(
-                    Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+        if (filteredCalcs.isEmpty()) {
+            item {
+                Text("No saved calculations in this filter.")
+            }
+            item {
+                Text(
+                    "Use Momentum / Combined Speed / Unit Tools above, then save the results to this case.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            itemsIndexed(
+                items = filteredCalcs,
+                key = { _, c -> c.calcId }
+            ) { _, c ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { onOpenCalculation(c.calcId) }
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    Column(
+                        Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                c.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                formatLocalTime(c.createdAtEpochMs),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Text(outputsPreview(c), style = MaterialTheme.typography.bodySmall)
+
                         Text(
-                            c.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.weight(1f)
+                            "Attributed to: ${attributionLine(caseFile, c)}",
+                            style = MaterialTheme.typography.bodySmall
                         )
-                        Spacer(Modifier.width(10.dp))
+
                         Text(
-                            formatLocalTime(c.createdAtEpochMs),
+                            "Tap to view work",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
-
-                    Text(outputsPreview(c), style = MaterialTheme.typography.bodySmall)
-
-                    Text(
-                        "Attributed to: ${attributionLine(caseFile, c)}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-
-                    Text(
-                        "Tap to view work",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
                 }
             }
         }
+
+        item { Spacer(Modifier.height(24.dp)) }
     }
 }
