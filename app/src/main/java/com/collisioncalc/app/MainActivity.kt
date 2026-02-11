@@ -1,4 +1,8 @@
-package com.example.collisioncalc
+package com.collisioncalc.app
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -15,25 +19,44 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import com.example.collisioncalc.data.*
-import com.example.collisioncalc.ui.caseworkbook.CaseDetailScreen
-import com.example.collisioncalc.ui.caseworkbook.CaseListScreen
-import com.example.collisioncalc.ui.caseworkbook.CaseTab
-import com.example.collisioncalc.ui.caseworkbook.NewCaseScreen
-import com.example.collisioncalc.ui.screens.*
-import com.example.collisioncalc.ui.theme.CollisionCalcTheme
+import com.collisioncalc.app.data.CalcId
+import com.collisioncalc.app.data.CaseFile
+import com.collisioncalc.app.data.CaseId
+import com.collisioncalc.app.data.CaseRepository
+import com.collisioncalc.app.data.CollisionInfo
+import com.collisioncalc.app.data.CrashLocation
+import com.collisioncalc.app.data.SavedCalculation
+import com.collisioncalc.app.data.UnitId
+import com.collisioncalc.app.data.Vehicle
+import com.collisioncalc.app.data.VehicleId
+import com.collisioncalc.app.ui.caseworkbook.CaseDetailScreen
+import com.collisioncalc.app.ui.caseworkbook.CaseListScreen
+import com.collisioncalc.app.ui.caseworkbook.CaseTab
+import com.collisioncalc.app.ui.caseworkbook.NewCaseScreen
+import com.collisioncalc.app.ui.screens.CalculationDetailScreen
+import com.collisioncalc.app.ui.screens.CombinedSpeedScreen
+import com.collisioncalc.app.ui.screens.HomeScreen
+import com.collisioncalc.app.ui.screens.MomentumWizardScreen
+import com.collisioncalc.app.ui.screens.PedestrianDetailScreen
+import com.collisioncalc.app.ui.screens.QuickToolsCalcsScreen
+import com.collisioncalc.app.ui.screens.TireSizeCompareScreen
+import com.collisioncalc.app.ui.screens.UnitConverterScreen
+import com.collisioncalc.app.ui.theme.CollisionCalcTheme
+import com.collisioncalc.app.ui.screens.VehicleDetailScreen
+import kotlin.Boolean
+import kotlin.OptIn
+import kotlin.Unit
+import kotlin.collections.plus
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,7 +139,7 @@ private fun AppRoot() {
         quickToolsCase.calculations.firstOrNull { it.calcId == calcId }
 
     Box(
-        modifier = Modifier
+        modifier = Modifier.Companion
             .fillMaxSize()
             .pointerInput(Unit) { detectTapGestures(onTap = { focusManager.clearFocus() }) }
     ) {
@@ -213,16 +236,37 @@ private fun AppRoot() {
                         onRemoveUnit = { unitId -> repo.removeUnit(s.caseId, unitId) },
 
                         onAddNote = { repo.addNote(s.caseId, it) },
-                        onOpenVehicle = { vehicleId -> navigate(Screen.VehicleDetail(s.caseId, vehicleId)) },
-                        onOpenPedestrian = { unitId -> navigate(Screen.PedestrianDetail(s.caseId, unitId)) },
+                        onOpenVehicle = { vehicleId ->
+                            navigate(
+                                Screen.VehicleDetail(
+                                    s.caseId,
+                                    vehicleId
+                                )
+                            )
+                        },
+                        onOpenPedestrian = { unitId ->
+                            navigate(
+                                Screen.PedestrianDetail(
+                                    s.caseId,
+                                    unitId
+                                )
+                            )
+                        },
 
                         onGoToCombinedSpeed = { navigate(Screen.CombinedSpeed(s.caseId)) },
                         onGoToMomentum = { navigate(Screen.Momentum(s.caseId)) },
 
-                        onOpenCalculation = { calcId -> navigate(Screen.CalculationDetail(s.caseId, calcId)) },
+                        onOpenCalculation = { calcId ->
+                            navigate(
+                                Screen.CalculationDetail(
+                                    s.caseId,
+                                    calcId
+                                )
+                            )
+                        },
 
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) },
-                        onGoToUnitTools = { navigate(Screen.UnitToolsCase(s.caseId)) } ,
+                        onGoToUnitTools = { navigate(Screen.UnitToolsCase(s.caseId)) },
                         onBeforeExport = { repo.flushNow(s.caseId) }
 
                     )
@@ -370,10 +414,10 @@ private fun LoadingScreen(onBack: () -> Unit) {
         }
     ) { padding ->
         Box(
-            modifier = Modifier
+            modifier = Modifier.Companion
                 .fillMaxSize()
                 .padding(padding),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Companion.Center
         ) {
             CircularProgressIndicator()
         }

@@ -8,16 +8,16 @@ plugins {
 }
 
 android {
-    namespace = "com.example.collisioncalc"
+    namespace = "com.collisioncalc.app"
     compileSdk = 36
 
 
     defaultConfig {
-        applicationId = "com.example.collisioncalc"
+        applicationId = "com.collisioncalc.app"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "0.9.1-pilot1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
