@@ -16,25 +16,20 @@ class CaseRepository(
     private val db = CollisionCalcDatabase.get(context)
     private val dao = db.caseDao()
 
-    // Debounce window (tune anytime)
     private val AUTOSAVE_DEBOUNCE_MS = 400L
 
     private val _caseSummaries = mutableStateListOf<CaseSummary>()
     val caseSummaries: List<CaseSummary> get() = _caseSummaries
 
-    /**
-     * IMPORTANT: This is now Compose-observable.
-     * Any updates to a case will trigger recomposition in any screen reading it.
-     */
+    // Compose-observable cache
     private val caseCache = mutableStateMapOf<CaseId, CaseFile>()
 
     // Debounced autosave jobs per-case
     private val saveJobs = mutableMapOf<CaseId, Job>()
 
     init {
-        // Live case list (counts)
         scope.launch(Dispatchers.IO) {
-            dao.observeCases().collectLatest { rows ->
+            dao.observeCaseListRows().collectLatest { rows ->
                 val summaries = rows.map {
                     CaseSummary(
                         caseId = it.caseId,
@@ -43,7 +38,8 @@ class CaseRepository(
                         vehiclesCount = it.vehiclesCount,
                         unitsCount = it.unitsCount,
                         notesCount = it.notesCount,
-                        calculationsCount = it.calculationsCount
+                        calculationsCount = it.calculationsCount,
+                        lastActivityEpochMs = it.lastActivityEpochMs
                     )
                 }
                 withContext(Dispatchers.Main) {
@@ -54,15 +50,14 @@ class CaseRepository(
         }
     }
 
-    /**
-     * Read a case from cache (Compose will recompose when this entry changes).
-     */
     fun cachedCase(caseId: CaseId): CaseFile? = caseCache[caseId]
+    fun flushNow(caseId: CaseId) {
+        saveJobs[caseId]?.cancel()
+        val current = caseCache[caseId] ?: return
+        persistNow(current)
+    }
 
-    /**
-     * Loads the full case from Room (and caches it). Safe to call repeatedly.
-     * Returns cached value if already loaded.
-     */
+
     suspend fun loadCase(caseId: CaseId): CaseFile? {
         caseCache[caseId]?.let { return it }
 
@@ -117,20 +112,27 @@ class CaseRepository(
         )
 
         caseCache[c.caseId] = c
-
-        // Save immediately so it appears in list right away.
         persistNow(c)
         return c
     }
 
-    // ---------------- Crash ----------------
+    // -------- NEW: delete case (cache + db) --------
+    fun deleteCase(caseId: CaseId) {
+        saveJobs[caseId]?.cancel()
+        saveJobs.remove(caseId)
+        caseCache.remove(caseId)
 
+        scope.launch(Dispatchers.IO) {
+            dao.deleteEntireCase(caseId)
+        }
+    }
+
+    // ---------------- Crash ----------------
     fun updateCrashInfo(caseId: CaseId, crashInfo: CollisionInfo) {
         updateCase(caseId) { it.copy(crashInfo = crashInfo) }
     }
 
     // ---------------- Notes ----------------
-
     fun addNote(caseId: CaseId, text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
@@ -138,7 +140,6 @@ class CaseRepository(
     }
 
     // ---------------- Vehicles ----------------
-
     fun updateVehicle(caseId: CaseId, updated: Vehicle) {
         updateCase(caseId) { case ->
             case.copy(vehicles = case.vehicles.map { if (it.vehicleId == updated.vehicleId) updated else it })
@@ -146,7 +147,6 @@ class CaseRepository(
     }
 
     // ---------------- Calculations ----------------
-
     fun saveCalculation(caseId: CaseId, calc: SavedCalculation) {
         val now = System.currentTimeMillis()
         val normalized = calc.copy(
@@ -159,7 +159,6 @@ class CaseRepository(
     }
 
     // ---------------- Units ----------------
-
     fun addVehicleUnit(caseId: CaseId) {
         val case = caseCache[caseId] ?: return
         val next = (case.units.count { it is VehicleUnit } + 1).coerceAtLeast(1)
@@ -221,7 +220,6 @@ class CaseRepository(
     }
 
     // ---------------- persistence helpers ----------------
-
     private fun updateCase(caseId: CaseId, transform: (CaseFile) -> CaseFile) {
         val current = caseCache[caseId] ?: return
         val updated = transform(current)

@@ -3,7 +3,6 @@ package com.example.collisioncalc.ui.caseworkbook
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -35,10 +34,10 @@ import com.example.collisioncalc.data.VehicleUnit
 fun UnitsTabScreen(
     caseFile: CaseFile,
     onOpenVehicle: (VehicleId) -> Unit,
-    onOpenPedestrian: (UnitId) -> Unit,        // NEW
+    onOpenPedestrian: (UnitId) -> Unit,
     onAddVehicleUnit: () -> Unit,
     onAddPedestrianUnit: () -> Unit,
-    onRenameUnit: (UnitId, String) -> Unit, // kept for compatibility
+    onRenameUnit: (UnitId, String) -> Unit,
     onRemoveUnit: (UnitId) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -51,7 +50,6 @@ fun UnitsTabScreen(
             .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // user preference: remove top label later if you want; leaving it minimal for now
         Text("Units", style = MaterialTheme.typography.titleSmall)
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

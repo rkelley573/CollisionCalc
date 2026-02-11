@@ -18,6 +18,27 @@ interface CaseDao {
         """
     )
     fun observeCases(): Flow<List<CaseRow>>
+    @Query(
+        """
+    SELECT
+        c.caseId AS caseId,
+        c.serviceNumber AS serviceNumber,
+        c.createdAtEpochMs AS createdAtEpochMs,
+        c.vehiclesCount AS vehiclesCount,
+        c.unitsCount AS unitsCount,
+        c.notesCount AS notesCount,
+        c.calculationsCount AS calculationsCount,
+        MAX(
+            c.createdAtEpochMs,
+            IFNULL((SELECT MAX(n.createdAtEpochMs) FROM notes n WHERE n.caseId = c.caseId), 0),
+            IFNULL((SELECT MAX(k.createdAtEpochMs) FROM calcs k WHERE k.caseId = c.caseId), 0)
+        ) AS lastActivityEpochMs
+    FROM cases c
+    ORDER BY lastActivityEpochMs DESC
+    """
+    )
+    fun observeCaseListRows(): Flow<List<CaseListRow>>
+
 
     // --------- read full case ----------
     @Query("SELECT * FROM cases WHERE caseId = :caseId LIMIT 1")
@@ -108,6 +129,37 @@ interface CaseDao {
 
     @Query("DELETE FROM calc_attrib_vehicles WHERE calcId IN (:calcIds)")
     suspend fun deleteCalcAttribVehicles(calcIds: List<String>)
+
+    // --------- NEW: hard delete an entire case ----------
+    @Query("DELETE FROM cases WHERE caseId = :caseId")
+    suspend fun deleteCaseRow(caseId: String)
+
+    @Transaction
+    suspend fun deleteEntireCase(caseId: String) {
+        // Vehicles/occupants
+        val vehicles = getVehicles(caseId)
+        val vehicleIds = vehicles.map { it.vehicleId }
+        if (vehicleIds.isNotEmpty()) deleteOccupantsForVehicles(vehicleIds)
+        deleteVehiclesForCase(caseId)
+
+        // Units / notes
+        deleteUnitsForCase(caseId)
+        deleteNotesForCase(caseId)
+
+        // Calcs + children
+        val calcs = getCalcs(caseId)
+        val calcIds = calcs.map { it.calcId }
+        if (calcIds.isNotEmpty()) {
+            deleteCalcValues(calcIds)
+            deleteCalcSteps(calcIds)
+            deleteCalcAttribUnits(calcIds)
+            deleteCalcAttribVehicles(calcIds)
+        }
+        deleteCalcsForCase(caseId)
+
+        // Case row last
+        deleteCaseRow(caseId)
+    }
 
     @Transaction
     suspend fun replaceCaseSnapshot(

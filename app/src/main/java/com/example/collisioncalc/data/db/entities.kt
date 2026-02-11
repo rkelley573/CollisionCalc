@@ -193,3 +193,15 @@ data class CalcAttribVehicleRow(
     val calcId: String,
     val vehicleId: String
 )
+
+data class CaseListRow(
+    val caseId: String,
+    val serviceNumber: String,
+    val createdAtEpochMs: Long,
+    val vehiclesCount: Int,
+    val unitsCount: Int,
+    val notesCount: Int,
+    val calculationsCount: Int,
+    val lastActivityEpochMs: Long
+)
+

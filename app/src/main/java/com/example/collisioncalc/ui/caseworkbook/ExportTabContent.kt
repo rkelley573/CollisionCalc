@@ -10,7 +10,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.collisioncalc.data.CaseFile
 import com.example.collisioncalc.ui.export.CaseExporter
@@ -18,7 +17,10 @@ import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ExportTabContent(caseFile: CaseFile) {
+fun ExportTabContent(
+    caseFile: CaseFile,
+    onBeforeExport: () -> Unit
+) {
     val context = LocalContext.current
 
     var agency by rememberSaveable { mutableStateOf("Grand Prairie Police Department") }
@@ -43,6 +45,7 @@ fun ExportTabContent(caseFile: CaseFile) {
         )
 
         runCatching {
+            onBeforeExport()
             CaseExporter.exportPdf(context, caseFile, uri, meta)
         }.onSuccess {
             status = "PDF exported."
@@ -68,6 +71,7 @@ fun ExportTabContent(caseFile: CaseFile) {
         )
 
         runCatching {
+            onBeforeExport()
             CaseExporter.exportDocx(context, caseFile, uri, meta)
         }.onSuccess {
             status = "Word (.docx) exported."

@@ -14,7 +14,7 @@ fun CaseDetailScreen(
     caseFile: CaseFile,
     onBack: () -> Unit,
 
-    // NEW: tab restore support (UI-only)
+    // tab restore support (UI-only)
     initialTab: CaseTab = CaseTab.CRASH,
     onTabChanged: (CaseTab) -> Unit = {},
 
@@ -41,12 +41,14 @@ fun CaseDetailScreen(
     onOpenCalculation: (calcId: CalcId) -> Unit,
 
     // Save calc into this case (used by in-case Unit Tools)
-    onSaveCalculation: (SavedCalculation) -> Unit
+    onSaveCalculation: (SavedCalculation) -> Unit,
+
+    // NEW: flush/persist hook (called right before export)
+    onBeforeExport: () -> Unit
 ) {
     var tab by remember(caseFile.caseId) { mutableStateOf(initialTab) }
     var showUnitTools by remember(caseFile.caseId) { mutableStateOf(false) }
 
-    // If caller restores tab, ensure UI reflects it when screen is recreated
     LaunchedEffect(caseFile.caseId, initialTab) {
         tab = initialTab
         onTabChanged(initialTab)
@@ -117,7 +119,10 @@ fun CaseDetailScreen(
                         onAddNote = onAddNote
                     )
 
-                    CaseTab.EXPORT -> ExportTabContent(caseFile = caseFile)
+                    CaseTab.EXPORT -> ExportTabContent(
+                        caseFile = caseFile,
+                        onBeforeExport = onBeforeExport
+                    )
                 }
             }
         }

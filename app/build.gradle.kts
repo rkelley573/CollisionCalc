@@ -67,10 +67,8 @@ dependencies {
 
     // Word (.docx)
     implementation("org.apache.poi:poi-ooxml:5.2.5")
-    implementation("org.apache.poi:poi:5.2.5")
 
     // PDF
-    implementation("com.itextpdf:itext7-core:7.2.5")
 
     // ✅ Room (autosave persistence)
     implementation("androidx.room:room-runtime:2.6.1")

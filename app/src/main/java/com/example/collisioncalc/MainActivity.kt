@@ -73,10 +73,7 @@ private fun AppRoot() {
 
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
 
-    // manual back stack
     val backStack = remember { mutableStateListOf<Screen>() }
-
-    // remember last selected tab per case
     val caseLastTab = remember { mutableStateMapOf<CaseId, CaseTab>() }
 
     fun navigate(to: Screen, addToBackStack: Boolean = true) {
@@ -94,7 +91,6 @@ private fun AppRoot() {
 
     val focusManager = LocalFocusManager.current
 
-    // In-memory “case” for Quick Tools
     var quickToolsCase by remember {
         mutableStateOf(
             CaseFile(
@@ -126,8 +122,6 @@ private fun AppRoot() {
     ) {
         when (val s = screen) {
 
-            // ---------------- Home ----------------
-
             Screen.Home -> HomeScreen(
                 onOpenUnitConverter = { navigate(Screen.UnitToolQuick) },
                 onOpenMomentumQuick = { navigate(Screen.MomentumQuick) },
@@ -135,8 +129,6 @@ private fun AppRoot() {
                 onOpenCaseWorkbook = { navigate(Screen.CaseList) },
                 onOpenQuickToolsCalcs = { navigate(Screen.QuickToolsCalcs) }
             )
-
-            // ---------------- Quick Tools ----------------
 
             Screen.UnitToolQuick -> UnitConverterScreen(
                 caseFile = quickToolsCase,
@@ -156,9 +148,7 @@ private fun AppRoot() {
                 }
             )
 
-            Screen.TireCompare -> TireSizeCompareScreen(
-                onBack = { popBack() }
-            )
+            Screen.TireCompare -> TireSizeCompareScreen(onBack = { popBack() })
 
             Screen.QuickToolsCalcs -> QuickToolsCalcsScreen(
                 caseFile = quickToolsCase,
@@ -185,7 +175,8 @@ private fun AppRoot() {
                 cases = repo.caseSummaries,
                 onBack = { popBack() },
                 onNewCase = { navigate(Screen.NewCase) },
-                onOpenCase = { caseId -> navigate(Screen.CaseDetail(caseId)) }
+                onOpenCase = { caseId -> navigate(Screen.CaseDetail(caseId)) },
+                onDeleteCase = { caseId -> repo.deleteCase(caseId) }
             )
 
             Screen.NewCase -> NewCaseScreen(
@@ -197,7 +188,6 @@ private fun AppRoot() {
             )
 
             is Screen.CaseDetail -> {
-                // Load if missing; UI reads from Compose-observable cache
                 LaunchedEffect(s.caseId) {
                     if (repo.cachedCase(s.caseId) == null) repo.loadCase(s.caseId)
                 }
@@ -232,7 +222,9 @@ private fun AppRoot() {
                         onOpenCalculation = { calcId -> navigate(Screen.CalculationDetail(s.caseId, calcId)) },
 
                         onSaveCalculation = { repo.saveCalculation(s.caseId, it) },
-                        onGoToUnitTools = { navigate(Screen.UnitToolsCase(s.caseId)) }
+                        onGoToUnitTools = { navigate(Screen.UnitToolsCase(s.caseId)) } ,
+                        onBeforeExport = { repo.flushNow(s.caseId) }
+
                     )
                 }
             }

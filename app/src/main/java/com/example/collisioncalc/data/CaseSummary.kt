@@ -7,5 +7,6 @@ data class CaseSummary(
     val vehiclesCount: Int,
     val unitsCount: Int,
     val notesCount: Int,
-    val calculationsCount: Int
+    val calculationsCount: Int,
+    val lastActivityEpochMs: Long
 )
