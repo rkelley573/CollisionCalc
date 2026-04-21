@@ -19,9 +19,8 @@ import com.collisioncalc.app.data.CaseFile
 import com.collisioncalc.app.data.SavedCalculation
 import com.collisioncalc.app.ui.components.AttributionPicker
 import com.collisioncalc.app.ui.components.AttributionSelection
-import com.collisioncalc.app.data.*
 import kotlin.math.*
-import com.collisioncalc.app.*
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MomentumWizardScreen(
@@ -32,22 +31,17 @@ fun MomentumWizardScreen(
     val v1 = caseFile.vehicles.getOrNull(0)
     val v2 = caseFile.vehicles.getOrNull(1)
 
-    // Attribution for this calc
     var attribution by remember(caseFile.caseId) { mutableStateOf(AttributionSelection()) }
 
-    // Defaults from vehicle weights if present
     var w1Text by remember { mutableStateOf(v1?.weightLb?.toString() ?: "") }
     var w2Text by remember { mutableStateOf(v2?.weightLb?.toString() ?: "") }
 
-    // Pre speeds (leave blank = unknown)
     var s1PreText by remember { mutableStateOf("") }
     var s2PreText by remember { mutableStateOf("") }
 
-    // Post speeds (required)
-    var s1PostText by remember { mutableStateOf("") } // S1′
-    var s2PostText by remember { mutableStateOf("") } // S2′
+    var s1PostText by remember { mutableStateOf("") }
+    var s2PostText by remember { mutableStateOf("") }
 
-    // Angles (degrees, 0° right, CCW positive)
     var t1PreText by remember { mutableStateOf("0") }
     var t2PreText by remember { mutableStateOf("90") }
     var t1PostText by remember { mutableStateOf("0") }
@@ -58,8 +52,8 @@ fun MomentumWizardScreen(
     val w1 = d(w1Text)
     val w2 = d(w2Text)
 
-    val s1Pre = d(s1PreText)   // nullable => unknown
-    val s2Pre = d(s2PreText)   // nullable => unknown
+    val s1Pre = d(s1PreText)
+    val s2Pre = d(s2PreText)
     val s1Post = d(s1PostText)
     val s2Post = d(s2PostText)
 
@@ -68,19 +62,13 @@ fun MomentumWizardScreen(
     val t1Post = d(t1PostText)
     val t2Post = d(t2PostText)
 
-    // Validation
     val w1Ok = (w1 != null && w1 > 0)
     val w2Ok = (w2 != null && w2 > 0)
-
     val s1PostOk = (s1Post != null && s1Post >= 0)
     val s2PostOk = (s2Post != null && s2Post >= 0)
-
     val s1PreOk = (s1Pre == null || s1Pre >= 0)
     val s2PreOk = (s2Pre == null || s2Pre >= 0)
-
     val anglesOk = (t1Pre != null && t2Pre != null && t1Post != null && t2Post != null)
-
-    // Must have at least one unknown to "solve"
     val unknownCount = listOf(s1Pre, s2Pre).count { it == null }
     val hasUnknown = unknownCount >= 1
 
@@ -161,30 +149,21 @@ fun MomentumWizardScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Weights", style = MaterialTheme.typography.titleSmall)
-
                     NumericField(
-                        label = "W1 (Vehicle 1)",
-                        value = w1Text,
-                        onValueChange = { w1Text = it },
-                        unit = "lb",
-                        isError = w1Text.isNotBlank() && !w1Ok,
+                        label = "W1 (Vehicle 1)", value = w1Text, onValueChange = { w1Text = it },
+                        unit = "lb", isError = w1Text.isNotBlank() && !w1Ok,
                         supportingText = if (w1Text.isNotBlank() && !w1Ok) "Enter a positive number." else null
                     )
                     NumericField(
-                        label = "W2 (Vehicle 2)",
-                        value = w2Text,
-                        onValueChange = { w2Text = it },
-                        unit = "lb",
-                        isError = w2Text.isNotBlank() && !w2Ok,
+                        label = "W2 (Vehicle 2)", value = w2Text, onValueChange = { w2Text = it },
+                        unit = "lb", isError = w2Text.isNotBlank() && !w2Ok,
                         supportingText = if (w2Text.isNotBlank() && !w2Ok) "Enter a positive number." else null
                     )
-
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = { w1Text = v1?.weightLb?.toString().orEmpty() },
                             enabled = v1?.weightLb != null
                         ) { Text("Use V1") }
-
                         OutlinedButton(
                             onClick = { w2Text = v2?.weightLb?.toString().orEmpty() },
                             enabled = v2?.weightLb != null
@@ -198,39 +177,27 @@ fun MomentumWizardScreen(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Speeds (mph)", style = MaterialTheme.typography.titleSmall)
                     Text("Leave S1 and/or S2 blank if unknown.", style = MaterialTheme.typography.bodySmall)
-
                     NumericField(
-                        label = "S1 (pre) — blank = unknown",
-                        value = s1PreText,
-                        onValueChange = { s1PreText = it },
-                        unit = "mph",
+                        label = "S1 (pre) — blank = unknown", value = s1PreText,
+                        onValueChange = { s1PreText = it }, unit = "mph",
                         isError = s1PreText.isNotBlank() && !s1PreOk,
                         supportingText = if (s1PreText.isNotBlank() && !s1PreOk) "Enter 0 or greater." else null
                     )
-
                     NumericField(
-                        label = "S2 (pre) — blank = unknown",
-                        value = s2PreText,
-                        onValueChange = { s2PreText = it },
-                        unit = "mph",
+                        label = "S2 (pre) — blank = unknown", value = s2PreText,
+                        onValueChange = { s2PreText = it }, unit = "mph",
                         isError = s2PreText.isNotBlank() && !s2PreOk,
                         supportingText = if (s2PreText.isNotBlank() && !s2PreOk) "Enter 0 or greater." else null
                     )
-
                     NumericField(
-                        label = "S1′ (post) — required",
-                        value = s1PostText,
-                        onValueChange = { s1PostText = it },
-                        unit = "mph",
+                        label = "S1′ (post) — required", value = s1PostText,
+                        onValueChange = { s1PostText = it }, unit = "mph",
                         isError = s1PostText.isNotBlank() && !s1PostOk,
                         supportingText = if (s1PostText.isNotBlank() && !s1PostOk) "Enter 0 or greater." else null
                     )
-
                     NumericField(
-                        label = "S2′ (post) — required",
-                        value = s2PostText,
-                        onValueChange = { s2PostText = it },
-                        unit = "mph",
+                        label = "S2′ (post) — required", value = s2PostText,
+                        onValueChange = { s2PostText = it }, unit = "mph",
                         isError = s2PostText.isNotBlank() && !s2PostOk,
                         supportingText = if (s2PostText.isNotBlank() && !s2PostOk) "Enter 0 or greater." else null
                     )
@@ -241,48 +208,17 @@ fun MomentumWizardScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Angles (degrees)", style = MaterialTheme.typography.titleSmall)
-                    Text("0° = right (+X), 90° = up (+Y), increasing CCW.", style = MaterialTheme.typography.bodySmall)
-
+                    Text("0° = right (+X), 90° = down (-Y), 180° = left (-X), 270° = up (+Y).", style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        NumericField(
-                            label = "θ1 (pre)",
-                            value = t1PreText,
-                            onValueChange = { t1PreText = it },
-                            unit = "°",
-                            modifier = Modifier.weight(1f)
-                        )
-                        NumericField(
-                            label = "θ2 (pre)",
-                            value = t2PreText,
-                            onValueChange = { t2PreText = it },
-                            unit = "°",
-                            modifier = Modifier.weight(1f)
-                        )
+                        NumericField(label = "θ1 (pre)", value = t1PreText, onValueChange = { t1PreText = it }, unit = "°", modifier = Modifier.weight(1f))
+                        NumericField(label = "θ2 (pre)", value = t2PreText, onValueChange = { t2PreText = it }, unit = "°", modifier = Modifier.weight(1f))
                     }
-
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                        NumericField(
-                            label = "θ1′ (post)",
-                            value = t1PostText,
-                            onValueChange = { t1PostText = it },
-                            unit = "°",
-                            modifier = Modifier.weight(1f)
-                        )
-                        NumericField(
-                            label = "θ2′ (post)",
-                            value = t2PostText,
-                            onValueChange = { t2PostText = it },
-                            unit = "°",
-                            modifier = Modifier.weight(1f)
-                        )
+                        NumericField(label = "θ1′ (post)", value = t1PostText, onValueChange = { t1PostText = it }, unit = "°", modifier = Modifier.weight(1f))
+                        NumericField(label = "θ2′ (post)", value = t2PostText, onValueChange = { t2PostText = it }, unit = "°", modifier = Modifier.weight(1f))
                     }
-
                     if (!anglesOk) {
-                        Text(
-                            "All angles must be numeric.",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Text("All angles must be numeric.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -298,8 +234,15 @@ fun MomentumWizardScreen(
                         solvedS2 != null -> "Solved: S2=${solvedS2.abs2()} mph"
                         else -> "—"
                     }
-
                     Text(line1, style = MaterialTheme.typography.titleMedium)
+
+                    // Delta-V and PDOF
+                    if (outcome != null) {
+                        outcome.dv1?.let { Text("ΔV1 = ${"%.2f".format(it)} mph", style = MaterialTheme.typography.bodyMedium) }
+                        outcome.dv2?.let { Text("ΔV2 = ${"%.2f".format(it)} mph", style = MaterialTheme.typography.bodyMedium) }
+                        outcome.pdof1?.let { Text("PDOF1 = ${"%.2f".format(it)}°", style = MaterialTheme.typography.bodyMedium) }
+                        outcome.pdof2?.let { Text("PDOF2 = ${"%.2f".format(it)}°", style = MaterialTheme.typography.bodyMedium) }
+                    }
 
                     if (!canSolve && missing.isNotEmpty()) {
                         Text(
@@ -331,13 +274,10 @@ fun MomentumWizardScreen(
                     val inputs = buildList {
                         add(CalcValue("W1", w1 ?: return@Button, "lb"))
                         add(CalcValue("W2", w2 ?: return@Button, "lb"))
-
                         s1Pre?.let { add(CalcValue("S1 (pre)", it, "mph")) }
                         s2Pre?.let { add(CalcValue("S2 (pre)", it, "mph")) }
-
                         add(CalcValue("S1′ (post)", s1Post ?: return@Button, "mph"))
                         add(CalcValue("S2′ (post)", s2Post ?: return@Button, "mph"))
-
                         add(CalcValue("θ1 (pre)", t1Pre ?: return@Button, "deg"))
                         add(CalcValue("θ2 (pre)", t2Pre ?: return@Button, "deg"))
                         add(CalcValue("θ1′ (post)", t1Post ?: return@Button, "deg"))
@@ -347,6 +287,10 @@ fun MomentumWizardScreen(
                     val outputs = buildList {
                         outS1?.let { add(CalcValue("S1", abs(it), "mph")) }
                         outS2?.let { add(CalcValue("S2", abs(it), "mph")) }
+                        outcome?.dv1?.let { add(CalcValue("ΔV1", it, "mph")) }
+                        outcome?.dv2?.let { add(CalcValue("ΔV2", it, "mph")) }
+                        outcome?.pdof1?.let { add(CalcValue("PDOF1", it, "deg")) }
+                        outcome?.pdof2?.let { add(CalcValue("PDOF2", it, "deg")) }
                     }
 
                     val calc = SavedCalculation(
@@ -354,7 +298,7 @@ fun MomentumWizardScreen(
                         title = "Momentum (360° Method)",
                         inputs = inputs,
                         outputs = outputs,
-                        equationText = "Vector momentum in X/Y with 360° headings",
+                        equationText = "360° Method — S1 from cosine, S2 from sine, with ΔV and PDOF",
                         steps = steps,
                         attributedUnitIds = attribution.unitIds,
                         attributedVehicleIds = attribution.vehicleIds
@@ -392,10 +336,9 @@ private fun MomentumAngleReferenceCard() {
             Text("How to measure angles:", style = MaterialTheme.typography.bodySmall)
             Text(
                 "• 0° points RIGHT (+X)\n" +
-                        "• Angles increase COUNTER-CLOCKWISE\n" +
-                        "• 90° is UP (+Y), 180° LEFT, 270° DOWN\n" +
-                        "• Enter angles 0–360 exactly like the diagram\n\n" +
-                        "If you measured clockwise: θCCW = (360 − θCW) mod 360",
+                        "• 90° is DOWN (-Y), 180° LEFT, 270° UP\n" +
+                        "• Angles increase CLOCKWISE\n" +
+                        "• Enter angles 0–360 exactly like the diagram",
                 style = MaterialTheme.typography.bodySmall
             )
         }
@@ -438,7 +381,18 @@ private fun NumericField(
 private data class SolveOutcome(
     val solvedS1: Double?,
     val solvedS2: Double?,
-    val steps: List<String>
+    val steps: List<String>,
+    val dv1: Double? = null,
+    val dv2: Double? = null,
+    val pdof1: Double? = null,
+    val pdof2: Double? = null
+)
+
+private data class DvPdof(
+    val dv1: Double?,
+    val dv2: Double?,
+    val pdof1: Double?,
+    val pdof2: Double?
 )
 
 private fun Double.fmt2(): String = "%.2f".format(this)
@@ -448,15 +402,90 @@ private fun Double.abs2(): String = "%.2f".format(Math.abs(this))
 private fun degToRad(deg: Double) = deg * Math.PI / 180.0
 private fun cosD(deg: Double) = Math.cos(degToRad(deg))
 
-// Clockwise convention: 0°=right, 90°=down, 180°=left, 270°=up
-// sin is negated relative to standard CCW math convention
+// Clockwise convention for momentum equations
 private fun sinD(deg: Double) = -Math.sin(degToRad(deg))
+
+// Standard CCW sin for ΔV/PDOF (relative angles)
+private fun sinStd(deg: Double) = Math.sin(degToRad(deg))
+private fun cosStd(deg: Double) = Math.cos(degToRad(deg))
+
+private fun calcDvPdof(
+    s1: Double, s2: Double,
+    s1Post: Double, s2Post: Double,
+    t1Pre: Double, t2Pre: Double,
+    t1Post: Double, t2Post: Double,
+    steps: MutableList<String>
+): DvPdof {
+    // Included angle = minimum angular difference between pre and post headings.
+    // This automatically handles absolute redirection (obtuse angle cases) without
+    // special casing — the geometry falls out correctly from the 360° headings.
+    fun includedAngle(tPre: Double, tPost: Double): Double {
+        val diff = Math.abs(tPre - tPost) % 360.0
+        return if (diff > 180.0) 360.0 - diff else diff
+    }
+
+    val a1 = includedAngle(t1Pre, t1Post)
+    val a2 = includedAngle(t2Pre, t2Post)
+
+    val dv1Sq = s1 * s1 + s1Post * s1Post - 2 * s1 * s1Post * cosStd(a1)
+    val dv1 = if (dv1Sq >= 0) Math.sqrt(dv1Sq) else null
+
+    val dv2Sq = s2 * s2 + s2Post * s2Post - 2 * s2 * s2Post * cosStd(a2)
+    val dv2 = if (dv2Sq >= 0) Math.sqrt(dv2Sq) else null
+
+    val pdof1 = if (dv1 != null && dv1 > 1e-9) {
+        val ratio = (s1Post * sinStd(a1)) / dv1
+        if (ratio in -1.0..1.0) Math.toDegrees(Math.asin(ratio)) else null
+    } else null
+
+    val pdof2 = if (dv2 != null && dv2 > 1e-9) {
+        val ratio = (s2Post * sinStd(a2)) / dv2
+        if (ratio in -1.0..1.0) Math.toDegrees(Math.asin(ratio)) else null
+    } else null
+
+    steps += ""
+    steps += "--- ΔV and PDOF ---"
+    steps += "(Included angle = min angular difference between pre and post headings)"
+    steps += ""
+    steps += "ΔV1 = √(S1² + S1'² − 2·S1·S1'·cos θ_included1)"
+    steps += "  θ_included1 = min(|${t1Pre.fmt2()}° − ${t1Post.fmt2()}°|, 360° − |${t1Pre.fmt2()}° − ${t1Post.fmt2()}°|) = ${a1.fmt2()}°"
+    steps += "  = √(${s1.fmt2()}² + ${s1Post.fmt2()}² − 2·${s1.fmt2()}·${s1Post.fmt2()}·cos(${a1.fmt2()}°))"
+    steps += "  = √(${(s1*s1).fmt4()} + ${(s1Post*s1Post).fmt4()} − ${(2*s1*s1Post*cosStd(a1)).fmt4()})"
+    steps += "  = √${dv1Sq.fmt4()}"
+    if (dv1 != null) steps += "  = ${dv1.fmt2()} mph" else steps += "  = undefined"
+
+    steps += ""
+    steps += "ΔV2 = √(S2² + S2'² − 2·S2·S2'·cos θ_included2)"
+    steps += "  θ_included2 = min(|${t2Pre.fmt2()}° − ${t2Post.fmt2()}°|, 360° − |${t2Pre.fmt2()}° − ${t2Post.fmt2()}°|) = ${a2.fmt2()}°"
+    steps += "  = √(${s2.fmt2()}² + ${s2Post.fmt2()}² − 2·${s2.fmt2()}·${s2Post.fmt2()}·cos(${a2.fmt2()}°))"
+    steps += "  = √(${(s2*s2).fmt4()} + ${(s2Post*s2Post).fmt4()} − ${(2*s2*s2Post*cosStd(a2)).fmt4()})"
+    steps += "  = √${dv2Sq.fmt4()}"
+    if (dv2 != null) steps += "  = ${dv2.fmt2()} mph" else steps += "  = undefined"
+
+    steps += ""
+    steps += "PDOF1 = arcsin(S1'·sin θ_included1 / ΔV1)"
+    if (dv1 != null && dv1 > 1e-9) {
+        steps += "      = arcsin(${s1Post.fmt2()}·sin(${a1.fmt2()}°) / ${dv1.fmt2()})"
+        steps += "      = arcsin(${(s1Post * sinStd(a1)).fmt4()} / ${dv1.fmt2()})"
+        if (pdof1 != null) steps += "      = ${"%.2f".format(pdof1)}°" else steps += "      = undefined"
+    } else steps += "      = undefined (ΔV1 ≈ 0)"
+
+    steps += ""
+    steps += "PDOF2 = arcsin(S2'·sin θ_included2 / ΔV2)"
+    if (dv2 != null && dv2 > 1e-9) {
+        steps += "      = arcsin(${s2Post.fmt2()}·sin(${a2.fmt2()}°) / ${dv2.fmt2()})"
+        steps += "      = arcsin(${(s2Post * sinStd(a2)).fmt4()} / ${dv2.fmt2()})"
+        if (pdof2 != null) steps += "      = ${"%.2f".format(pdof2)}°" else steps += "      = undefined"
+    } else steps += "      = undefined (ΔV2 ≈ 0)"
+
+    return DvPdof(dv1, dv2, pdof1, pdof2)
+}
 
 private fun solveMomentum360Outcome(
     w1: Double,
     w2: Double,
-    s1Pre: Double?,   // null = unknown
-    s2Pre: Double?,   // null = unknown
+    s1Pre: Double?,
+    s2Pre: Double?,
     s1Post: Double,
     s2Post: Double,
     t1Pre: Double,
@@ -477,7 +506,6 @@ private fun solveMomentum360Outcome(
     steps += "  θ1'=${t1Post.fmt2()}°,  θ2'=${t2Post.fmt2()}°"
     steps += ""
 
-    // Pre-compute trig values
     val cosT1Post = cosD(t1Post)
     val cosT2Post = cosD(t2Post)
     val sinT1Post = sinD(t1Post)
@@ -487,10 +515,6 @@ private fun solveMomentum360Outcome(
     val sinT1Pre  = sinD(t1Pre)
     val sinT2Pre  = sinD(t2Pre)
 
-    // -------------------------------------------------------
-    // Helper: solve S2 from sine (Y) equation given known S1
-    // S2 = (W1·S1'·sinθ1' + W2·S2'·sinθ2' - W1·S1·sinθ1) / (W2·sinθ2)
-    // -------------------------------------------------------
     fun solveS2FromSine(knownS1: Double): Pair<Double?, String> {
         val den = w2 * sinT2Pre
         return if (Math.abs(den) < 1e-6) {
@@ -515,10 +539,6 @@ private fun solveMomentum360Outcome(
         }
     }
 
-    // -------------------------------------------------------
-    // Helper: solve S1 from cosine (X) equation given known S2
-    // S1 = S1'·cosθ1' + (W2·S2'·cosθ2') / W1 - (W2·S2·cosθ2) / W1
-    // -------------------------------------------------------
     fun solveS1FromCosine(knownS2: Double): Pair<Double, String> {
         val term1 = s1Post * cosT1Post
         val term2 = (w2 * s2Post * cosT2Post) / w1
@@ -536,9 +556,7 @@ private fun solveMomentum360Outcome(
         return Pair(s1, detail)
     }
 
-    // -------------------------------------------------------
-    // CASE 1: Both unknown — solve S2 from sine first, then S1 from cosine
-    // -------------------------------------------------------
+    // CASE 1: Both unknown
     if (s1Pre == null && s2Pre == null) {
         steps += "STEP 1 — Solve S2 using Y (sine) equation:"
         steps += "  S2 = (W1·S1'·sinθ1' + W2·S2'·sinθ2') / (W2·sinθ2)"
@@ -562,28 +580,23 @@ private fun solveMomentum360Outcome(
         steps += "  S2 = ${num.fmt4()} / ${den.fmt4()} = ${s2Solved.fmt2()} mph"
         steps += ""
         steps += "STEP 2 — Solve S1 using X (cosine) equation with S2=${s2Solved.fmt2()} mph:"
-
         val (s1Solved, s1Detail) = solveS1FromCosine(s2Solved)
         s1Detail.lines().forEach { steps += it }
         steps += ""
         steps += "RESULT: S1 = ${Math.abs(s1Solved).fmt2()} mph,  S2 = ${Math.abs(s2Solved).fmt2()} mph"
 
-        return SolveOutcome(s1Solved, s2Solved, steps)
+        val dp = calcDvPdof(Math.abs(s1Solved), Math.abs(s2Solved), s1Post, s2Post, t1Pre, t2Pre, t1Post, t2Post, steps)
+        return SolveOutcome(s1Solved, s2Solved, steps, dp.dv1, dp.dv2, dp.pdof1, dp.pdof2)
     }
 
-    // -------------------------------------------------------
-    // CASE 2: S2 known, solve S1 from cosine
-    // -------------------------------------------------------
+    // CASE 2: S2 known, solve S1
     if (s1Pre == null && s2Pre != null) {
         steps += "S2 is known = ${s2Pre.fmt2()} mph"
         steps += ""
         steps += "STEP 1 — Solve S1 using X (cosine) equation:"
-
         val (s1Solved, s1Detail) = solveS1FromCosine(s2Pre)
         s1Detail.lines().forEach { steps += it }
         steps += ""
-
-        // Verify with sine if possible
         steps += "STEP 2 — Verify using Y (sine) equation:"
         val (s2Check, s2Detail) = solveS2FromSine(s1Solved)
         steps += s2Detail
@@ -595,17 +608,15 @@ private fun solveMomentum360Outcome(
         steps += ""
         steps += "RESULT: S1 = ${Math.abs(s1Solved).fmt2()} mph"
 
-        return SolveOutcome(s1Solved, s2Pre, steps)
+        val dp = calcDvPdof(Math.abs(s1Solved), s2Pre, s1Post, s2Post, t1Pre, t2Pre, t1Post, t2Post, steps)
+        return SolveOutcome(s1Solved, s2Pre, steps, dp.dv1, dp.dv2, dp.pdof1, dp.pdof2)
     }
 
-    // -------------------------------------------------------
-    // CASE 3: S1 known, solve S2 from sine
-    // -------------------------------------------------------
+    // CASE 3: S1 known, solve S2
     if (s1Pre != null && s2Pre == null) {
         steps += "S1 is known = ${s1Pre.fmt2()} mph"
         steps += ""
         steps += "STEP 1 — Solve S2 using Y (sine) equation:"
-
         val (s2Solved, s2Detail) = solveS2FromSine(s1Pre)
         if (s2Solved == null) {
             steps += s2Detail
@@ -614,8 +625,6 @@ private fun solveMomentum360Outcome(
         }
         s2Detail.lines().forEach { steps += it }
         steps += ""
-
-        // Verify with cosine
         steps += "STEP 2 — Verify using X (cosine) equation:"
         val (s1Check, s1Detail) = solveS1FromCosine(s2Solved)
         s1Detail.lines().forEach { steps += it }
@@ -625,10 +634,11 @@ private fun solveMomentum360Outcome(
         steps += ""
         steps += "RESULT: S2 = ${Math.abs(s2Solved).fmt2()} mph"
 
-        return SolveOutcome(s1Pre, s2Solved, steps)
+        val dp = calcDvPdof(s1Pre, Math.abs(s2Solved), s1Post, s2Post, t1Pre, t2Pre, t1Post, t2Post, steps)
+        return SolveOutcome(s1Pre, s2Solved, steps, dp.dv1, dp.dv2, dp.pdof1, dp.pdof2)
     }
 
-    // Both known — nothing to solve
+    // Both known
     steps += "Both S1 and S2 are provided — nothing to solve."
     return SolveOutcome(s1Pre, s2Pre, steps)
 }
