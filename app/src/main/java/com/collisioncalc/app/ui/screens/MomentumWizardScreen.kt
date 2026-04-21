@@ -441,32 +441,22 @@ private data class SolveOutcome(
     val steps: List<String>
 )
 
-private fun Double.clean6(): String = "%.6f".format(this).trimEnd('0').trimEnd('.')
-private fun Double.abs2(): String = "%.2f".format(abs(this))
+private fun Double.fmt2(): String = "%.2f".format(this)
+private fun Double.fmt4(): String = "%.4f".format(this)
+private fun Double.abs2(): String = "%.2f".format(Math.abs(this))
 
 private fun degToRad(deg: Double) = deg * Math.PI / 180.0
-private fun cosD(deg: Double) = cos(degToRad(deg))
-private fun sinD(deg: Double) = sin(degToRad(deg))
+private fun cosD(deg: Double) = Math.cos(degToRad(deg))
 
-private data class Solve2(val s1: Double, val s2: Double)
-
-private fun solve2x2(
-    a11: Double, a12: Double,
-    a21: Double, a22: Double,
-    b1: Double, b2: Double
-): Solve2? {
-    val det = a11 * a22 - a12 * a21
-    if (abs(det) < 1e-9) return null
-    val s1 = (b1 * a22 - a12 * b2) / det
-    val s2 = (a11 * b2 - b1 * a21) / det
-    return Solve2(s1, s2)
-}
+// Clockwise convention: 0°=right, 90°=down, 180°=left, 270°=up
+// sin is negated relative to standard CCW math convention
+private fun sinD(deg: Double) = -Math.sin(degToRad(deg))
 
 private fun solveMomentum360Outcome(
     w1: Double,
     w2: Double,
-    s1Pre: Double?,
-    s2Pre: Double?,
+    s1Pre: Double?,   // null = unknown
+    s2Pre: Double?,   // null = unknown
     s1Post: Double,
     s2Post: Double,
     t1Pre: Double,
@@ -475,99 +465,170 @@ private fun solveMomentum360Outcome(
     t2Post: Double
 ): SolveOutcome {
 
-    val bX = (w1 * s1Post * cosD(t1Post)) + (w2 * s2Post * cosD(t2Post))
-    val bY = (w1 * s1Post * sinD(t1Post)) + (w2 * s2Post * sinD(t2Post))
-
-    val a11 = w1 * cosD(t1Pre)
-    val a21 = w1 * sinD(t1Pre)
-
-    val a12 = w2 * cosD(t2Pre)
-    val a22 = w2 * sinD(t2Pre)
-
-    val s1Unknown = (s1Pre == null)
-    val s2Unknown = (s2Pre == null)
-
     val steps = mutableListOf<String>()
-    steps += "360° Momentum Method"
-    steps += "X: W1·S1·cosθ1 + W2·S2·cosθ2 = W1·S1′·cosθ1′ + W2·S2′·cosθ2′"
-    steps += "Y: W1·S1·sinθ1 + W2·S2·sinθ2 = W1·S1′·sinθ1′ + W2·S2′·sinθ2′"
+    steps += "360° Method of Computing Momentum"
+    steps += "Convention: 0°=right(+X), 90°=down(-Y), 180°=left(-X), 270°=up(+Y)"
     steps += ""
     steps += "Inputs:"
-    steps += "W1=${w1.clean6()}, W2=${w2.clean6()} (lb)"
-    steps += "S1=${s1Pre?.clean6() ?: "?"}, S2=${s2Pre?.clean6() ?: "?"}, S1′=${s1Post.clean6()}, S2′=${s2Post.clean6()} (mph)"
-    steps += "θ1=${t1Pre.clean6()}, θ2=${t2Pre.clean6()}, θ1′=${t1Post.clean6()}, θ2′=${t2Post.clean6()} (deg)"
-    steps += ""
-    steps += "Compute RHS (post momentum):"
-    steps += "bX = ${bX.clean6()}"
-    steps += "bY = ${bY.clean6()}"
-    steps += ""
-    steps += "Coefficient matrix:"
-    steps += "a11=W1·cosθ1=${a11.clean6()}   a12=W2·cosθ2=${a12.clean6()}"
-    steps += "a21=W1·sinθ1=${a21.clean6()}   a22=W2·sinθ2=${a22.clean6()}"
+    steps += "  W1=${w1.fmt2()} lb,  W2=${w2.fmt2()} lb"
+    steps += "  S1'=${s1Post.fmt2()} mph,  S2'=${s2Post.fmt2()} mph"
+    steps += "  S1=${s1Pre?.fmt2() ?: "unknown"},  S2=${s2Pre?.fmt2() ?: "unknown"}"
+    steps += "  θ1=${t1Pre.fmt2()}°,  θ2=${t2Pre.fmt2()}°"
+    steps += "  θ1'=${t1Post.fmt2()}°,  θ2'=${t2Post.fmt2()}°"
     steps += ""
 
-    if (s1Unknown && s2Unknown) {
-        val sol = solve2x2(a11, a12, a21, a22, bX, bY)
-        if (sol == null) {
-            steps += "System is singular/unstable (det≈0). Check angles."
+    // Pre-compute trig values
+    val cosT1Post = cosD(t1Post)
+    val cosT2Post = cosD(t2Post)
+    val sinT1Post = sinD(t1Post)
+    val sinT2Post = sinD(t2Post)
+    val cosT1Pre  = cosD(t1Pre)
+    val cosT2Pre  = cosD(t2Pre)
+    val sinT1Pre  = sinD(t1Pre)
+    val sinT2Pre  = sinD(t2Pre)
+
+    // -------------------------------------------------------
+    // Helper: solve S2 from sine (Y) equation given known S1
+    // S2 = (W1·S1'·sinθ1' + W2·S2'·sinθ2' - W1·S1·sinθ1) / (W2·sinθ2)
+    // -------------------------------------------------------
+    fun solveS2FromSine(knownS1: Double): Pair<Double?, String> {
+        val den = w2 * sinT2Pre
+        return if (Math.abs(den) < 1e-6) {
+            Pair(null, "  Sine equation denominator ≈ 0 (collinear crash) — skipping Y equation.")
+        } else {
+            val num = (w1 * s1Post * sinT1Post) + (w2 * s2Post * sinT2Post) - (w1 * knownS1 * sinT1Pre)
+            val s2 = num / den
+            val detail = buildString {
+                appendLine("  Formula: S2 = (W1·S1'·sinθ1' + W2·S2'·sinθ2' - W1·S1·sinθ1) / (W2·sinθ2)")
+                appendLine("  Substitute:")
+                appendLine("    Numerator = (${w1.fmt2()}·${s1Post.fmt2()}·sin(${t1Post.fmt2()}°))")
+                appendLine("              + (${w2.fmt2()}·${s2Post.fmt2()}·sin(${t2Post.fmt2()}°))")
+                appendLine("              - (${w1.fmt2()}·${knownS1.fmt2()}·sin(${t1Pre.fmt2()}°))")
+                appendLine("            = (${(w1 * s1Post * sinT1Post).fmt4()})")
+                appendLine("            + (${(w2 * s2Post * sinT2Post).fmt4()})")
+                appendLine("            - (${(w1 * knownS1 * sinT1Pre).fmt4()})")
+                appendLine("            = ${num.fmt4()}")
+                appendLine("    Denominator = ${w2.fmt2()}·sin(${t2Pre.fmt2()}°) = ${den.fmt4()}")
+                append("  S2 = ${num.fmt4()} / ${den.fmt4()} = ${s2.fmt2()} mph")
+            }
+            Pair(s2, detail)
+        }
+    }
+
+    // -------------------------------------------------------
+    // Helper: solve S1 from cosine (X) equation given known S2
+    // S1 = S1'·cosθ1' + (W2·S2'·cosθ2') / W1 - (W2·S2·cosθ2) / W1
+    // -------------------------------------------------------
+    fun solveS1FromCosine(knownS2: Double): Pair<Double, String> {
+        val term1 = s1Post * cosT1Post
+        val term2 = (w2 * s2Post * cosT2Post) / w1
+        val term3 = (w2 * knownS2 * cosT2Pre) / w1
+        val s1 = term1 + term2 - term3
+        val detail = buildString {
+            appendLine("  Formula: S1 = S1'·cosθ1' + (W2·S2'·cosθ2')/W1 - (W2·S2·cosθ2)/W1")
+            appendLine("  Substitute:")
+            appendLine("    Term 1 = ${s1Post.fmt2()}·cos(${t1Post.fmt2()}°) = ${term1.fmt4()}")
+            appendLine("    Term 2 = (${w2.fmt2()}·${s2Post.fmt2()}·cos(${t2Post.fmt2()}°)) / ${w1.fmt2()} = ${term2.fmt4()}")
+            appendLine("    Term 3 = (${w2.fmt2()}·${knownS2.fmt2()}·cos(${t2Pre.fmt2()}°)) / ${w1.fmt2()} = ${term3.fmt4()}")
+            appendLine("  S1 = ${term1.fmt4()} + ${term2.fmt4()} - (${term3.fmt4()})")
+            append("  S1 = ${s1.fmt2()} mph")
+        }
+        return Pair(s1, detail)
+    }
+
+    // -------------------------------------------------------
+    // CASE 1: Both unknown — solve S2 from sine first, then S1 from cosine
+    // -------------------------------------------------------
+    if (s1Pre == null && s2Pre == null) {
+        steps += "STEP 1 — Solve S2 using Y (sine) equation:"
+        steps += "  S2 = (W1·S1'·sinθ1' + W2·S2'·sinθ2') / (W2·sinθ2)"
+
+        val den = w2 * sinT2Pre
+        if (Math.abs(den) < 1e-6) {
+            steps += "  Sine denominator ≈ 0 — cannot solve both unknowns with collinear angles."
+            steps += "  Assign one speed and re-run."
             return SolveOutcome(null, null, steps)
         }
-        steps += "Solve 2×2 for S1 and S2:"
-        val det = (a11 * a22 - a12 * a21)
-        steps += "det = a11·a22 − a12·a21 = ${det.clean6()}"
-        steps += "S1 = ${sol.s1.clean6()} mph"
-        steps += "S2 = ${sol.s2.clean6()} mph"
-        return SolveOutcome(sol.s1, sol.s2, steps)
+
+        val num = (w1 * s1Post * sinT1Post) + (w2 * s2Post * sinT2Post)
+        val s2Solved = num / den
+
+        steps += "  Substitute:"
+        steps += "    Numerator = (${w1.fmt2()}·${s1Post.fmt2()}·sin(${t1Post.fmt2()}°))"
+        steps += "              + (${w2.fmt2()}·${s2Post.fmt2()}·sin(${t2Post.fmt2()}°))"
+        steps += "              = ${(w1 * s1Post * sinT1Post).fmt4()} + ${(w2 * s2Post * sinT2Post).fmt4()}"
+        steps += "              = ${num.fmt4()}"
+        steps += "    Denominator = ${w2.fmt2()}·sin(${t2Pre.fmt2()}°) = ${den.fmt4()}"
+        steps += "  S2 = ${num.fmt4()} / ${den.fmt4()} = ${s2Solved.fmt2()} mph"
+        steps += ""
+        steps += "STEP 2 — Solve S1 using X (cosine) equation with S2=${s2Solved.fmt2()} mph:"
+
+        val (s1Solved, s1Detail) = solveS1FromCosine(s2Solved)
+        s1Detail.lines().forEach { steps += it }
+        steps += ""
+        steps += "RESULT: S1 = ${Math.abs(s1Solved).fmt2()} mph,  S2 = ${Math.abs(s2Solved).fmt2()} mph"
+
+        return SolveOutcome(s1Solved, s2Solved, steps)
     }
 
-    fun chooseAxis(denX: Double, denY: Double): Boolean = abs(denX) >= abs(denY)
+    // -------------------------------------------------------
+    // CASE 2: S2 known, solve S1 from cosine
+    // -------------------------------------------------------
+    if (s1Pre == null && s2Pre != null) {
+        steps += "S2 is known = ${s2Pre.fmt2()} mph"
+        steps += ""
+        steps += "STEP 1 — Solve S1 using X (cosine) equation:"
 
-    if (s1Unknown && !s2Unknown) {
-        val knownS2 = s2Pre!!
+        val (s1Solved, s1Detail) = solveS1FromCosine(s2Pre)
+        s1Detail.lines().forEach { steps += it }
+        steps += ""
 
-        val numX = bX - (w2 * knownS2 * cosD(t2Pre))
-        val numY = bY - (w2 * knownS2 * sinD(t2Pre))
-
-        val useX = chooseAxis(a11, a21)
-        val denom = if (useX) a11 else a21
-        val num = if (useX) numX else numY
-
-        steps += "Solve S1 with S2 known:"
-        steps += "numX = bX − W2·S2·cosθ2 = ${numX.clean6()}"
-        steps += "numY = bY − W2·S2·sinθ2 = ${numY.clean6()}"
-        steps += "Using ${if (useX) "X(cos)" else "Y(sin)"} axis"
-        if (abs(denom) < 1e-9) {
-            steps += "Denominator too small; check angles."
-            return SolveOutcome(null, knownS2, steps)
+        // Verify with sine if possible
+        steps += "STEP 2 — Verify using Y (sine) equation:"
+        val (s2Check, s2Detail) = solveS2FromSine(s1Solved)
+        steps += s2Detail
+        if (s2Check != null) {
+            steps += "  Check: S2 should be ${s2Pre.fmt2()} mph, sine gives ${s2Check.fmt2()} mph"
+            val diff = Math.abs(s2Check - s2Pre)
+            steps += if (diff < 0.5) "  ✓ Sine equation confirms result." else "  ⚠ Difference of ${diff.fmt2()} mph — check angles."
         }
-        val s1 = num / denom
-        steps += "S1 = ${num.clean6()} / ${denom.clean6()} = ${s1.clean6()} mph"
-        return SolveOutcome(s1, knownS2, steps)
+        steps += ""
+        steps += "RESULT: S1 = ${Math.abs(s1Solved).fmt2()} mph"
+
+        return SolveOutcome(s1Solved, s2Pre, steps)
     }
 
-    if (!s1Unknown && s2Unknown) {
-        val knownS1 = s1Pre!!
+    // -------------------------------------------------------
+    // CASE 3: S1 known, solve S2 from sine
+    // -------------------------------------------------------
+    if (s1Pre != null && s2Pre == null) {
+        steps += "S1 is known = ${s1Pre.fmt2()} mph"
+        steps += ""
+        steps += "STEP 1 — Solve S2 using Y (sine) equation:"
 
-        val numX = bX - (w1 * knownS1 * cosD(t1Pre))
-        val numY = bY - (w1 * knownS1 * sinD(t1Pre))
-
-        val useX = chooseAxis(a12, a22)
-        val denom = if (useX) a12 else a22
-        val num = if (useX) numX else numY
-
-        steps += "Solve S2 with S1 known:"
-        steps += "numX = bX − W1·S1·cosθ1 = ${numX.clean6()}"
-        steps += "numY = bY − W1·S1·sinθ1 = ${numY.clean6()}"
-        steps += "Using ${if (useX) "X(cos)" else "Y(sin)"} axis"
-        if (abs(denom) < 1e-9) {
-            steps += "Denominator too small; check angles."
-            return SolveOutcome(knownS1, null, steps)
+        val (s2Solved, s2Detail) = solveS2FromSine(s1Pre)
+        if (s2Solved == null) {
+            steps += s2Detail
+            steps += "  Cannot solve S2 with these angles — try assigning S2 instead."
+            return SolveOutcome(s1Pre, null, steps)
         }
-        val s2 = num / denom
-        steps += "S2 = ${num.clean6()} / ${denom.clean6()} = ${s2.clean6()} mph"
-        return SolveOutcome(knownS1, s2, steps)
+        s2Detail.lines().forEach { steps += it }
+        steps += ""
+
+        // Verify with cosine
+        steps += "STEP 2 — Verify using X (cosine) equation:"
+        val (s1Check, s1Detail) = solveS1FromCosine(s2Solved)
+        s1Detail.lines().forEach { steps += it }
+        steps += "  Check: S1 should be ${s1Pre.fmt2()} mph, cosine gives ${s1Check.fmt2()} mph"
+        val diff = Math.abs(s1Check - s1Pre)
+        steps += if (diff < 0.5) "  ✓ Cosine equation confirms result." else "  ⚠ Difference of ${diff.fmt2()} mph — check angles."
+        steps += ""
+        steps += "RESULT: S2 = ${Math.abs(s2Solved).fmt2()} mph"
+
+        return SolveOutcome(s1Pre, s2Solved, steps)
     }
 
-    steps += "Nothing to solve (both S1 and S2 provided)."
+    // Both known — nothing to solve
+    steps += "Both S1 and S2 are provided — nothing to solve."
     return SolveOutcome(s1Pre, s2Pre, steps)
 }
