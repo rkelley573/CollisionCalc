@@ -1,6 +1,7 @@
 package com.collisioncalc.app.ui.caseworkbook
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -276,7 +277,7 @@ fun CalcsTabContent(
                                 readOnly = true,
                                 label = { Text("Sort") },
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
-                                modifier = Modifier.menuAnchor().fillMaxWidth()
+                                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                             )
                             ExposedDropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
                                 DropdownMenuItem(text = { Text("Newest") }, onClick = { sortMode = CalcSortMode.NEWEST; sortExpanded = false })
@@ -301,7 +302,7 @@ fun CalcsTabContent(
                                 readOnly = true,
                                 label = { Text("Group") },
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = groupExpanded) },
-                                modifier = Modifier.menuAnchor().fillMaxWidth()
+                                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                             )
                             ExposedDropdownMenu(expanded = groupExpanded, onDismissRequest = { groupExpanded = false }) {
                                 DropdownMenuItem(text = { Text("None") }, onClick = { groupMode = CalcGroupMode.NONE; groupExpanded = false })

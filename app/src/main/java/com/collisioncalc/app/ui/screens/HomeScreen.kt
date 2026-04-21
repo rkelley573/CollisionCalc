@@ -61,7 +61,7 @@ fun HomeScreen(
                 ToolRow("Momentum Wizard", "2D momentum / post-impact speed", onOpenMomentumQuick)
                 ToolRow("Tire Size Compare", "Compare tire sizes and error", onOpenTireCompare)
 
-                Divider(Modifier.padding(vertical = 6.dp))
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
 
                 OutlinedButton(onClick = onOpenQuickToolsCalcs, modifier = Modifier.fillMaxWidth()) {
                     Text("View Quick Tool Calculations")
