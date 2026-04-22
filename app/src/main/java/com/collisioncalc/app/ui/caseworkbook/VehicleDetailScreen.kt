@@ -387,11 +387,11 @@ fun VehicleDetailScreen(
                                     // DOB: user types ddmmyyyy, store ISO
                                     // --- DOB: allow typing freely (ddmmyyyy), commit to ISO only when valid ---
                                     val dobTextKey = "${vehicleId}_${idx}_dob"
-                                    var dobText by remember(dobTextKey) { mutableStateOf(isoToDdMmYyyyDisplay(o.dobIso)) }
+                                    var dobText by remember(dobTextKey) { mutableStateOf(isoToMmDdYyyyDisplay(o.dobIso)) }
 
 // Keep the editable text in sync if DOB is changed elsewhere (or loaded)
                                     LaunchedEffect(o.dobIso) {
-                                        val formatted = isoToDdMmYyyyDisplay(o.dobIso)
+                                        val formatted = isoToMmDdYyyyDisplay(o.dobIso)
                                         if (formatted != dobText) dobText = formatted
                                     }
 
@@ -403,7 +403,7 @@ fun VehicleDetailScreen(
                                             dobText = cleaned
 
                                             // Only commit to model when it's a valid full date
-                                            val iso = parseDdMmYyyyToIso(cleaned)
+                                            val iso = parseMmDdYyyyToIso(cleaned)
 
                                             occupants = occupants.toMutableList().also { list ->
                                                 if (idx !in list.indices) return@also
@@ -412,7 +412,7 @@ fun VehicleDetailScreen(
                                                 )
                                             }
                                         },
-                                        label = "DOB (ddmmyyyy)",
+                                        label = "DOB (mmddyyyy)",
                                         keyboardType = KeyboardType.Number,
                                         modifier = Modifier.fillMaxWidth()
                                     )
@@ -812,20 +812,20 @@ private fun TireTripleRowClearable(
    Date helpers: ddmmyyyy <-> ISO
 ---------------------------- */
 
-private fun parseDdMmYyyyToIso(input: String): String? {
+private fun parseMmDdYyyyToIso(input: String): String? {
     val digits = input.filter { it.isDigit() }
     if (digits.length != 8) return null
-    val dd = digits.substring(0, 2).toIntOrNull() ?: return null
-    val mm = digits.substring(2, 4).toIntOrNull() ?: return null
+    val mm = digits.substring(0, 2).toIntOrNull() ?: return null
+    val dd = digits.substring(2, 4).toIntOrNull() ?: return null
     val yyyy = digits.substring(4, 8).toIntOrNull() ?: return null
     return runCatching { LocalDate.of(yyyy, mm, dd).toString() }.getOrNull()
 }
 
-private fun isoToDdMmYyyyDisplay(iso: String): String {
+private fun isoToMmDdYyyyDisplay(iso: String): String {
     if (iso.isBlank()) return ""
     return runCatching {
         val d = LocalDate.parse(iso)
-        "%02d%02d%04d".format(d.dayOfMonth, d.monthValue, d.year)
+        "%02d%02d%04d".format(d.monthValue, d.dayOfMonth, d.year)
     }.getOrElse { "" }
 }
 
