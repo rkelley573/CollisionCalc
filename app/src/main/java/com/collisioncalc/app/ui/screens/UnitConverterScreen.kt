@@ -4,7 +4,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
@@ -58,7 +62,8 @@ fun UnitConverterScreen(
                 UnitToolCatalog.Goal.FALL_SPEED,
                 UnitToolCatalog.Goal.LONG_VAULT_SPEED,
                 UnitToolCatalog.Goal.FINAL_SPEED_FROM_V0_A_T,
-                UnitToolCatalog.Goal.FINAL_SPEED_FROM_V0_MU_T
+                UnitToolCatalog.Goal.FINAL_SPEED_FROM_V0_MU_T,
+                UnitToolCatalog.Goal.S0_FROM_A_D_STOP
             )
 
             Category.VELOCITY -> listOf(
@@ -66,7 +71,8 @@ fun UnitConverterScreen(
                 UnitToolCatalog.Goal.AVG_VELOCITY_FROM_D_T,
                 UnitToolCatalog.Goal.VELOCITY_FROM_A_T,
                 UnitToolCatalog.Goal.VF_FROM_V0_A_T,
-                UnitToolCatalog.Goal.VF_FROM_V0_A_D
+                UnitToolCatalog.Goal.VF_FROM_V0_A_D,
+                UnitToolCatalog.Goal.V0_FROM_A_D_STOP
             )
 
             Category.TIME -> listOf(
@@ -103,6 +109,8 @@ fun UnitConverterScreen(
 
             Category.GRADE_ANGLE_RADIUS -> listOf(
                 UnitToolCatalog.Goal.GRADE_FROM_RISE_RUN,
+                UnitToolCatalog.Goal.GRADE_TO_ANGLE,
+                UnitToolCatalog.Goal.ANGLE_TO_GRADE,
                 UnitToolCatalog.Goal.TAKEOFF_ANGLE_FROM_D_H,
                 UnitToolCatalog.Goal.UNKNOWN_TAKEOFF_LANDING_LOWER,
                 UnitToolCatalog.Goal.UNKNOWN_TAKEOFF_LANDING_HIGHER,
@@ -120,17 +128,6 @@ fun UnitConverterScreen(
         return raw.filter { goalsWithFormulas.contains(it) }
     }
 
-    fun needsSign(goal: UnitToolCatalog.Goal): Boolean = goal in setOf(
-        UnitToolCatalog.Goal.SPEED_FROM_D_MU_G_E,
-        UnitToolCatalog.Goal.FLIP_VAULT_SPEED,
-        UnitToolCatalog.Goal.FALL_SPEED,
-        UnitToolCatalog.Goal.LONG_VAULT_SPEED,
-        UnitToolCatalog.Goal.VF_FROM_V0_A_T,
-        UnitToolCatalog.Goal.VF_FROM_V0_A_D,
-        UnitToolCatalog.Goal.DIST_FROM_V0_T_A,
-        UnitToolCatalog.Goal.FINAL_SPEED_FROM_V0_A_T,
-        UnitToolCatalog.Goal.FINAL_SPEED_FROM_V0_MU_T
-    )
 
     // ---------------- attribution ----------------
     var attribution by remember(caseFile.caseId) { mutableStateOf(AttributionSelection()) }
@@ -164,6 +161,14 @@ fun UnitConverterScreen(
         val raw = textByVar[varKey]?.trim().orEmpty()
         if (raw.isEmpty()) return null
         return raw.toDoubleOrNull()
+    }
+
+    // If a goal has exactly one formula whose requires == varsForGoal exactly,
+    // there's no real choice to make — auto-select all vars and hide step 2.
+    val autoSelectVars: Set<UnitToolCatalog.Var>? = remember(goal, allFormulas) {
+        val single = allFormulas.filter { it.goal == goal }.singleOrNull() ?: return@remember null
+        val options = UnitToolCatalog.varsForGoal(goal).toSet()
+        if (options == single.requires) single.requires else null
     }
 
     val pickedFormula = remember(goal, known, allFormulas) {
@@ -234,6 +239,9 @@ fun UnitConverterScreen(
                 known = (known - remove)
             }
         }
+
+        // Auto-select when there's no real choice to make
+        if (autoSelectVars != null) known = autoSelectVars
     }
 
     infoGoal?.let { g ->
@@ -337,13 +345,15 @@ fun UnitConverterScreen(
                         )
                     }
 
-                    if (needsSign(goal)) {
+                    val sq = pickedFormula?.signQuestion
+                    if (sq != null) {
                         DropDownField(
-                            label = "± choice",
-                            value = signMode.label,
-                            options = UnitToolCatalog.SignMode.entries.map { it.label },
+                            label = sq.label,
+                            value = if (signMode == UnitToolCatalog.SignMode.PLUS) sq.plusLabel else sq.minusLabel,
+                            options = listOf(sq.plusLabel, sq.minusLabel),
                             onSelect = { sel ->
-                                signMode = UnitToolCatalog.SignMode.entries.first { it.label == sel }
+                                signMode = if (sel == sq.plusLabel) UnitToolCatalog.SignMode.PLUS
+                                           else UnitToolCatalog.SignMode.MINUS
                                 clearResult()
                             }
                         )
@@ -351,122 +361,146 @@ fun UnitConverterScreen(
                 }
             }
 
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("2) What do you know?", style = MaterialTheme.typography.titleSmall)
-                    Text("Select what you have. The tool will auto-derive what it can.", style = MaterialTheme.typography.bodySmall)
+            // Combined Speed uses its own per-segment formula UI
+            if (goal == UnitToolCatalog.Goal.COMBINED_SPEED) {
 
-                    val options = UnitToolCatalog.varsForGoal(goal)
+                CombinedSpeedContent(
+                    allFormulas = allFormulas,
+                    attributedUnitIds = attribution.unitIds,
+                    attributedVehicleIds = attribution.vehicleIds,
+                    onSaveCalculation = onSaveCalculation
+                )
 
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        options.forEach { v ->
-                            FilterChip(
-                                selected = known.contains(v),
-                                onClick = {
-                                    known = known.mutexApplyToggle(v, goal, textByVar)
-                                    clearResult()
-                                },
-                                label = { Text(v.label) }
-                            )
-                        }
-                    }
+            } else {
 
-                    if (known.isNotEmpty() && pickedFormula == null) {
-                        Text(
-                            "Those selections don’t form a valid method (even with derivations).",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
+                if (autoSelectVars == null) {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("2) What do you know?", style = MaterialTheme.typography.titleSmall)
+                            Text("Select what you have. The tool will auto-derive what it can.", style = MaterialTheme.typography.bodySmall)
 
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("3) Enter values", style = MaterialTheme.typography.titleSmall)
+                            val options = UnitToolCatalog.varsForGoal(goal)
 
-                    val varsToShow = known.toList().sortedBy { it.label }
-                    if (varsToShow.isEmpty()) {
-                        Text("Select what you know above.", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        varsToShow.forEach { v ->
-                            NumericInput(
-                                label = v.label,
-                                value = textByVar[v].orEmpty(),
-                                onValueChange = { textByVar[v] = it; error = null; computed = null },
-                                trailing = v.unitHint
-                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                options.forEach { v ->
+                                    FilterChip(
+                                        selected = known.contains(v),
+                                        onClick = {
+                                            known = known.mutexApplyToggle(v, goal, textByVar)
+                                            clearResult()
+                                        },
+                                        label = { Text(v.label) }
+                                    )
+                                }
+                            }
+
+                            if (known.isNotEmpty() && pickedFormula == null) {
+                                Text(
+                                    "Those selections don’t form a valid method (even with derivations).",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            Button(
-                onClick = { computeNow() },
-                enabled = computeEnabled,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Compute") }
-
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-            }
-
-            computed?.let { c ->
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Result", style = MaterialTheme.typography.titleSmall)
+                        val stepLabel = if (autoSelectVars == null) "3) Enter values" else "2) Enter values"
+                        Text(stepLabel, style = MaterialTheme.typography.titleSmall)
 
-                        c.outputs.forEach { out ->
-                            Text(
-                                "${out.name}: ${format3(out.value)} ${out.unit}".trim(),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        }
-
-                        var showWork by remember { mutableStateOf(false) }
-                        TextButton(onClick = { showWork = !showWork }) {
-                            Text(if (showWork) "Hide Work" else "Show Work")
-                        }
-                        if (showWork) {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                c.steps.forEach { line ->
-                                    Text(line, style = MaterialTheme.typography.bodySmall)
-                                }
+                        val varsToShow = known.toList().sortedBy { it.label }
+                        if (varsToShow.isEmpty()) {
+                            Text("Select what you know above.", style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            val focusManager = LocalFocusManager.current
+                            varsToShow.forEachIndexed { index, v ->
+                                val isLast = index == varsToShow.lastIndex
+                                NumericInput(
+                                    label = v.label,
+                                    value = textByVar[v].orEmpty(),
+                                    onValueChange = { textByVar[v] = it; error = null; computed = null },
+                                    trailing = v.unitHint,
+                                    imeAction = if (isLast) ImeAction.Done else ImeAction.Next,
+                                    onImeAction = {
+                                        if (isLast) { if (computeEnabled) computeNow() }
+                                        else focusManager.moveFocus(FocusDirection.Down)
+                                    }
+                                )
                             }
                         }
                     }
                 }
 
                 Button(
+                    onClick = { computeNow() },
+                    enabled = computeEnabled,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Compute") }
+
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+
+                computed?.let { c ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Result", style = MaterialTheme.typography.titleSmall)
+
+                            c.outputs.forEach { out ->
+                                Text(
+                                    "${out.name}: ${format3(out.value)} ${out.unit}".trim(),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                            }
+
+                            var showWork by remember { mutableStateOf(false) }
+                            TextButton(onClick = { showWork = !showWork }) {
+                                Text(if (showWork) "Hide Work" else "Show Work")
+                            }
+                            if (showWork) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    c.steps.forEach { line ->
+                                        Text(line, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            val calc = SavedCalculation(
+                                type = CalcType.UNIT_TOOL,
+                                title = c.title,
+                                inputs = c.inputs,
+                                outputs = c.outputs,
+                                equationText = c.equationText,
+                                steps = c.steps,
+                                attributedVehicleIds = attribution.vehicleIds,
+                                attributedUnitIds = attribution.unitIds
+                            )
+                            onSaveCalculation(calc)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Save") }
+                }
+
+                OutlinedButton(
                     onClick = {
-                        val calc = SavedCalculation(
-                            type = CalcType.UNIT_TOOL,
-                            title = c.title,
-                            inputs = c.inputs,
-                            outputs = c.outputs,
-                            equationText = c.equationText,
-                            steps = c.steps,
-                            attributedVehicleIds = attribution.vehicleIds,
-                            attributedUnitIds = attribution.unitIds
-                        )
-                        onSaveCalculation(calc)
+                        known = emptySet()
+                        textByVar.clear()
+                        clearResult()
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Save") }
-            }
+                ) { Text("Clear") }
 
-            OutlinedButton(
-                onClick = {
-                    known = emptySet()
-                    textByVar.clear()
-                    clearResult()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Clear") }
+            } // end non-COMBINED_SPEED branch
 
             Spacer(Modifier.height(24.dp))
         }
@@ -563,14 +597,24 @@ private fun NumericInput(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
-    trailing: String
+    trailing: String,
+    imeAction: ImeAction = ImeAction.Next,
+    onImeAction: () -> Unit = {}
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
         trailingIcon = { Text(trailing) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Decimal,
+            imeAction = imeAction
+        ),
+        keyboardActions = KeyboardActions(
+            onNext = { onImeAction() },
+            onDone = { onImeAction() }
+        ),
+        singleLine = true,
         modifier = Modifier.fillMaxWidth()
     )
 }

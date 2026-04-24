@@ -39,12 +39,14 @@ import com.collisioncalc.app.data.CaseFile
 import com.collisioncalc.app.data.SavedCalculation
 import com.collisioncalc.app.ui.components.AttributionPicker
 import com.collisioncalc.app.ui.components.AttributionSelection
+import com.collisioncalc.app.ui.components.SpeedInputState
+import com.collisioncalc.app.ui.components.SpeedInputWithFormulaPicker
 import kotlin.math.sqrt
 
 private data class SpeedRow(
     val id: String,
     val label: String,
-    val valueText: String
+    val input: SpeedInputState = SpeedInputState()
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,30 +61,50 @@ fun CombinedSpeedScreen(
     var rows by remember {
         mutableStateOf(
             listOf(
-                SpeedRow(id = "1", label = "Component 1", valueText = ""),
-                SpeedRow(id = "2", label = "Component 2", valueText = "")
+                SpeedRow(id = "1", label = "Component 1"),
+                SpeedRow(id = "2", label = "Component 2")
             )
         )
     }
 
-    fun parsedValues(): List<Double> =
-        rows.mapNotNull { it.valueText.trim().takeIf { t -> t.isNotEmpty() }?.toDoubleOrNull() }
+    fun parsedValues(): List<Pair<SpeedRow, Double>> =
+        rows.mapNotNull { r -> r.input.effectiveValue?.let { r to it } }
 
-    val values = parsedValues()
+    val valuePairs = parsedValues()
+    val values = valuePairs.map { it.second }
     val sumSquares = values.sumOf { it * it }
     val combined = if (values.size >= 2) sqrt(sumSquares) else null
 
     val equationText = "S = √(Σv²)"
+
+    // Collect derivation blocks for every row that was computed via a formula
+    // (regardless of whether its current effectiveValue is usable right now).
+    val derivationBlocks: List<List<String>> = rows.mapIndexedNotNull { idx, row ->
+        val sectionLabel = row.label.ifBlank { "Segment ${idx + 1}" }
+        row.input.derivationBlock(sectionLabel).takeIf { it.isNotEmpty() }
+    }
+
     val steps = buildList {
-        add("Equation: $equationText")
-        if (values.isNotEmpty()) {
-            val termStr = values.joinToString(" + ") { v -> "${v}²" }
-            add("Substitute: S = √($termStr)")
-            val expanded = values.joinToString(" + ") { v -> (v * v).toString() }
-            add("Compute: S = √($expanded)")
+        if (derivationBlocks.isNotEmpty()) {
+            add("=== Segment derivations ===")
+            derivationBlocks.forEachIndexed { i, block ->
+                addAll(block)
+                if (i < derivationBlocks.size - 1) add("")
+            }
+            add("")
         }
-        if (combined != null) add("Result: S = ${"%.2f".format(combined)} mph")
-        else add("Result: Enter at least two speeds.")
+
+        add("=== Combined speed ===")
+        add("Formula:    $equationText")
+        if (values.isNotEmpty()) {
+            val termStr = values.joinToString(" + ") { v -> "${"%.2f".format(v)}²" }
+            add("Substitute: S = √($termStr)")
+            val expanded = values.joinToString(" + ") { v -> "%.4f".format(v * v) }
+            add("Compute:    S = √($expanded)")
+            add("            S = √(${"%.4f".format(sumSquares)})")
+        }
+        if (combined != null) add("Result:     S = ${"%.2f".format(combined)} mph")
+        else add("Result:     Enter at least two speeds.")
     }
 
     Scaffold(
@@ -131,44 +153,52 @@ fun CombinedSpeedScreen(
                 ) {
                     Text("Inputs", style = MaterialTheme.typography.titleSmall)
                     Text("Combined = √(sum of each speed²)", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "For each segment, either enter a speed directly or calculate it from a formula.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
                     rows.forEachIndexed { idx, r ->
-                        Card(Modifier.fillMaxWidth()) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                ClearableOutlinedTextField(
-                                    value = r.label,
-                                    onValueChange = { newLabel ->
-                                        rows = rows.toMutableList().apply {
-                                            this[idx] = this[idx].copy(label = newLabel)
-                                        }
-                                    },
-                                    label = "Label",
-                                    keyboardType = KeyboardType.Text,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedTextField(
+                                value = r.label,
+                                onValueChange = { newLabel ->
+                                    rows = rows.toMutableList().apply {
+                                        this[idx] = this[idx].copy(label = newLabel)
+                                    }
+                                },
+                                label = { Text("Label") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                                trailingIcon = {
+                                    if (r.label.isNotEmpty()) {
+                                        IconButton(onClick = {
+                                            rows = rows.toMutableList().apply {
+                                                this[idx] = this[idx].copy(label = "")
+                                            }
+                                        }) { Icon(Icons.Filled.Close, contentDescription = "Clear") }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
 
-                                ClearableOutlinedTextField(
-                                    value = r.valueText,
-                                    onValueChange = { newVal ->
-                                        rows = rows.toMutableList().apply {
-                                            this[idx] = this[idx].copy(valueText = newVal)
-                                        }
-                                    },
-                                    label = "Speed (mph)",
-                                    keyboardType = KeyboardType.Decimal,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
-                                if (rows.size > 2) {
-                                    TextButton(
-                                        onClick = {
-                                            rows = rows.toMutableList().apply { removeAt(idx) }
-                                        }
-                                    ) { Text("Remove") }
+                            SpeedInputWithFormulaPicker(
+                                label = r.label.ifBlank { "Segment ${idx + 1}" },
+                                state = r.input,
+                                onStateChange = { newState ->
+                                    rows = rows.toMutableList().apply {
+                                        this[idx] = this[idx].copy(input = newState)
+                                    }
                                 }
+                            )
+
+                            if (rows.size > 2) {
+                                TextButton(
+                                    onClick = {
+                                        rows = rows.toMutableList().apply { removeAt(idx) }
+                                    }
+                                ) { Text("Remove segment") }
                             }
                         }
                     }
@@ -182,8 +212,7 @@ fun CombinedSpeedScreen(
                                 val nextId = (rows.size + 1).toString()
                                 rows = rows + SpeedRow(
                                     id = nextId,
-                                    label = "Component ${rows.size + 1}",
-                                    valueText = ""
+                                    label = "Component ${rows.size + 1}"
                                 )
                             },
                             modifier = Modifier.weight(1f)
@@ -192,8 +221,8 @@ fun CombinedSpeedScreen(
                         OutlinedButton(
                             onClick = {
                                 rows = listOf(
-                                    SpeedRow(id = "1", label = "Component 1", valueText = ""),
-                                    SpeedRow(id = "2", label = "Component 2", valueText = "")
+                                    SpeedRow(id = "1", label = "Component 1"),
+                                    SpeedRow(id = "2", label = "Component 2")
                                 )
                             },
                             modifier = Modifier.weight(1f)
@@ -238,8 +267,7 @@ fun CombinedSpeedScreen(
                     if (values.size < 2) return@Button
 
                     val inputs = rows.mapNotNull { row ->
-                        val v = row.valueText.trim().takeIf { it.isNotEmpty() }?.toDoubleOrNull()
-                            ?: return@mapNotNull null
+                        val v = row.input.effectiveValue ?: return@mapNotNull null
                         CalcValue(
                             name = row.label.ifBlank { "Component" },
                             value = v,
@@ -256,7 +284,6 @@ fun CombinedSpeedScreen(
                         outputs = listOf(CalcValue(name = "S", value = outVal, unit = "mph")),
                         equationText = equationText,
                         steps = steps,
-                        // Leave unassigned unless user selects something
                         attributedUnitIds = attribution.unitIds,
                         attributedVehicleIds = attribution.vehicleIds
                     )
@@ -274,26 +301,192 @@ fun CombinedSpeedScreen(
 }
 
 @Composable
-private fun ClearableOutlinedTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    label: String,
-    keyboardType: KeyboardType,
-    modifier: Modifier = Modifier
+fun CombinedSpeedContent(
+    allFormulas: List<UnitToolCatalog.Formula>,
+    attributedUnitIds: Set<String>,
+    attributedVehicleIds: Set<String>,
+    onSaveCalculation: (SavedCalculation) -> Unit
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        trailingIcon = {
-            if (value.isNotEmpty()) {
-                IconButton(onClick = { onValueChange("") }) {
-                    Icon(Icons.Filled.Close, contentDescription = "Clear")
+    var rows by remember {
+        mutableStateOf(
+            listOf(
+                SpeedRow(id = "1", label = "Component 1"),
+                SpeedRow(id = "2", label = "Component 2")
+            )
+        )
+    }
+
+    fun parsedValues(): List<Pair<SpeedRow, Double>> =
+        rows.mapNotNull { r -> r.input.effectiveValue?.let { r to it } }
+
+    val valuePairs = parsedValues()
+    val values = valuePairs.map { it.second }
+    val sumSquares = values.sumOf { it * it }
+    val combined = if (values.size >= 2) sqrt(sumSquares) else null
+
+    val equationText = "S = √(Σv²)"
+
+    val derivationBlocks: List<List<String>> = rows.mapIndexedNotNull { idx, row ->
+        val sectionLabel = row.label.ifBlank { "Segment ${idx + 1}" }
+        row.input.derivationBlock(sectionLabel).takeIf { it.isNotEmpty() }
+    }
+
+    val steps = buildList {
+        if (derivationBlocks.isNotEmpty()) {
+            add("=== Segment derivations ===")
+            derivationBlocks.forEachIndexed { i, block ->
+                addAll(block)
+                if (i < derivationBlocks.size - 1) add("")
+            }
+            add("")
+        }
+        add("=== Combined speed ===")
+        add("Formula:    $equationText")
+        if (values.isNotEmpty()) {
+            val termStr = values.joinToString(" + ") { v -> "${"%.2f".format(v)}²" }
+            add("Substitute: S = √($termStr)")
+            val expanded = values.joinToString(" + ") { v -> "%.4f".format(v * v) }
+            add("Compute:    S = √($expanded)")
+            add("            S = √(${"%.4f".format(sumSquares)})")
+        }
+        if (combined != null) add("Result:     S = ${"%.2f".format(combined)} mph")
+        else add("Result:     Enter at least two speeds.")
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Inputs", style = MaterialTheme.typography.titleSmall)
+                Text("Combined = √(sum of each speed²)", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "For each segment, either enter a speed directly or calculate it from a formula.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                rows.forEachIndexed { idx, r ->
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedTextField(
+                            value = r.label,
+                            onValueChange = { newLabel ->
+                                rows = rows.toMutableList().apply {
+                                    this[idx] = this[idx].copy(label = newLabel)
+                                }
+                            },
+                            label = { Text("Label") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                            trailingIcon = {
+                                if (r.label.isNotEmpty()) {
+                                    IconButton(onClick = {
+                                        rows = rows.toMutableList().apply {
+                                            this[idx] = this[idx].copy(label = "")
+                                        }
+                                    }) { Icon(Icons.Filled.Close, contentDescription = "Clear") }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        SpeedInputWithFormulaPicker(
+                            label = r.label.ifBlank { "Segment ${idx + 1}" },
+                            state = r.input,
+                            onStateChange = { newState ->
+                                rows = rows.toMutableList().apply {
+                                    this[idx] = this[idx].copy(input = newState)
+                                }
+                            }
+                        )
+
+                        if (rows.size > 2) {
+                            TextButton(
+                                onClick = {
+                                    rows = rows.toMutableList().apply { removeAt(idx) }
+                                }
+                            ) { Text("Remove segment") }
+                        }
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Button(
+                        onClick = {
+                            val nextId = (rows.size + 1).toString()
+                            rows = rows + SpeedRow(id = nextId, label = "Component ${rows.size + 1}")
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Add Row") }
+
+                    OutlinedButton(
+                        onClick = {
+                            rows = listOf(
+                                SpeedRow(id = "1", label = "Component 1"),
+                                SpeedRow(id = "2", label = "Component 2")
+                            )
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Reset") }
                 }
             }
-        },
-        modifier = modifier
-    )
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Result", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = if (combined != null)
+                        "Combined Speed: ${"%.2f".format(combined)} mph"
+                    else
+                        "Combined Speed: —",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text("Σv² = ${"%.2f".format(sumSquares)}", style = MaterialTheme.typography.bodySmall)
+                Text("n = ${values.size}", style = MaterialTheme.typography.bodySmall)
+
+                var showWork by remember { mutableStateOf(false) }
+                TextButton(onClick = { showWork = !showWork }) {
+                    Text(if (showWork) "Hide Work" else "Show Work")
+                }
+                if (showWork) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        steps.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+        }
+
+        Button(
+            onClick = {
+                if (values.size < 2) return@Button
+                val inputs = rows.mapNotNull { row ->
+                    val v = row.input.effectiveValue ?: return@mapNotNull null
+                    CalcValue(name = row.label.ifBlank { "Component" }, value = v, unit = "mph")
+                }
+                val outVal = combined ?: return@Button
+                onSaveCalculation(
+                    SavedCalculation(
+                        type = CalcType.COMBINED_SPEED,
+                        title = "Combined Speed",
+                        inputs = inputs,
+                        outputs = listOf(CalcValue(name = "S", value = outVal, unit = "mph")),
+                        equationText = equationText,
+                        steps = steps,
+                        attributedUnitIds = attributedUnitIds,
+                        attributedVehicleIds = attributedVehicleIds
+                    )
+                )
+            },
+            enabled = combined != null,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Save") }
+    }
 }

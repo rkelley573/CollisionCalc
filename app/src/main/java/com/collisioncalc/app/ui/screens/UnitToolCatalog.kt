@@ -5,6 +5,7 @@ import kotlin.math.atan
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.tan
 
 /**
  * Unit Tool Catalog (NON-Momentum)
@@ -85,7 +86,15 @@ object UnitToolCatalog {
         RADIUS_FROM_CHORD_MIDORD("Radius from chord & middle-ordinate", "R = C²/(8·m) + m/2"),
         SIN_FROM_OPP_HYP("sinθ from opp/hyp", "sinθ = opp/hyp"),
         COS_FROM_ADJ_HYP("cosθ from adj/hyp", "cosθ = adj/hyp"),
-        TAN_FROM_OPP_ADJ("tanθ from opp/adj", "tanθ = opp/adj")
+        TAN_FROM_OPP_ADJ("tanθ from opp/adj", "tanθ = opp/adj"),
+
+        // Grade / angle conversions
+        GRADE_TO_ANGLE("Grade to angle", "θ = atan(g)°"),
+        ANGLE_TO_GRADE("Angle to grade", "g = tan(θ)"),
+
+        // Starting speed / velocity (solving backwards to a stop)
+        V0_FROM_A_D_STOP("Starting velocity from rate + distance (to stop)", "V0 = √(2·a·d)"),
+        S0_FROM_A_D_STOP("Starting speed from rate + distance (to stop)", "S0 = fps→mph(√(2·a·d))")
     }
 
     enum class Var(val label: String, val unitHint: String) {
@@ -96,8 +105,9 @@ object UnitToolCatalog {
         V0_FPS("Original velocity (V0)", "ft/s"),
         VF_FPS("Final velocity (VF)", "ft/s"),
 
-        // Shortcut: initial speed as mph
+        // Shortcuts: initial/final speed as mph
         V0_SPEED_MPH("Original speed (S0)", "mph"),
+        VF_SPEED_MPH("Final speed (SF)", "mph"),
 
         // Distance / time
         DISTANCE("Distance", "ft or m"),
@@ -148,13 +158,25 @@ object UnitToolCatalog {
         val steps: List<String>
     )
 
+    data class SignQuestion(
+        val label: String,
+        val plusLabel: String,
+        val minusLabel: String
+    )
+
     data class Formula(
         val id: String,
         val goal: Goal,
         val requires: Set<Var>,
         val equationText: String,
+        val signQuestion: SignQuestion? = null,
         val compute: (ctx: Context, values: Map<Var, Double>) -> Computed
     )
+
+    val SQ_ACCEL_DECEL  = SignQuestion("Motion type",     "Accelerating",               "Decelerating")
+    val SQ_GRADE_SPEED  = SignQuestion("Grade direction", "Uphill (adds to drag)",       "Downhill (reduces drag)")
+    val SQ_VAULT        = SignQuestion("Landing height",  "Landing lower",               "Landing higher")
+    val SQ_FALL_GRADE   = SignQuestion("Grade direction", "Downgrade (aids fall)",       "Upgrade (opposes fall)")
 
     /* ---------------- helpers ---------------- */
 
@@ -223,9 +245,22 @@ object UnitToolCatalog {
             out[Var.V0_FPS] = mphToFps(out.req(Var.V0_SPEED_MPH))
         }
 
+        // VF from final speed (SF)
+        if (!out.containsKey(Var.VF_FPS) && out.containsKey(Var.VF_SPEED_MPH)) {
+            out[Var.VF_FPS] = mphToFps(out.req(Var.VF_SPEED_MPH))
+        }
+
         // allow SPEED_MPH to serve as initial speed if V0 missing (your “make it easy” behavior)
         if (!out.containsKey(Var.V0_FPS) && out.containsKey(Var.SPEED_MPH)) {
             out[Var.V0_FPS] = mphToFps(out.req(Var.SPEED_MPH))
+        }
+
+        // grade ↔ angle
+        if (!out.containsKey(Var.TAKEOFF_ANGLE_DEG) && out.containsKey(Var.GRADE)) {
+            out[Var.TAKEOFF_ANGLE_DEG] = atan(out.req(Var.GRADE)) * 180.0 / Math.PI
+        }
+        if (!out.containsKey(Var.GRADE) && out.containsKey(Var.TAKEOFF_ANGLE_DEG)) {
+            out[Var.GRADE] = tan(degToRad(out.req(Var.TAKEOFF_ANGLE_DEG)))
         }
 
         return out
@@ -245,9 +280,14 @@ object UnitToolCatalog {
         if (known.contains(Var.MU)) known.add(Var.A_FTPS2)
         if (known.contains(Var.A_FTPS2)) known.add(Var.MU)
 
-        // initial speed → V0
+        // initial/final speed → V0/VF
         if (known.contains(Var.V0_SPEED_MPH)) known.add(Var.V0_FPS)
+        if (known.contains(Var.VF_SPEED_MPH)) known.add(Var.VF_FPS)
         if (known.contains(Var.SPEED_MPH)) known.add(Var.V0_FPS)
+
+        // grade ↔ angle
+        if (known.contains(Var.GRADE)) known.add(Var.TAKEOFF_ANGLE_DEG)
+        if (known.contains(Var.TAKEOFF_ANGLE_DEG)) known.add(Var.GRADE)
 
         return known.containsAll(formula.requires)
     }
@@ -324,8 +364,13 @@ object UnitToolCatalog {
                 ),
                 steps = listOf(
                     "D(ft) = ${fmt(D_in)} ${ctx.distanceUnit.label} → ${fmt(Dft)} ft",
-                    "Inside = 30 · ${fmt(Dft)} · ${fmt(mu, 6)} · ${fmt(e, 4)} = ${fmt(inside)}",
-                    "S = √(${fmt(inside)}) = ${fmt(S)} mph"
+                    "Formula:    S = √(30 · D · μ · e)",
+                    "  D = ${fmt(Dft)} ft        (skid distance)",
+                    "  μ = ${fmt(mu, 6)}         (drag factor)",
+                    "  e = ${fmt(e, 4)}          (braking efficiency)",
+                    "Substitute: S = √(30 · ${fmt(Dft)} · ${fmt(mu, 6)} · ${fmt(e, 4)})",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     S = ${fmt(S)} mph"
                 )
             )
         }
@@ -334,7 +379,8 @@ object UnitToolCatalog {
             id = "speed_from_d_mu_g_e",
             goal = Goal.SPEED_FROM_D_MU_G_E,
             requires = setOf(Var.DISTANCE, Var.MU, Var.GRADE, Var.EFF),
-            equationText = "S = √(30 · D · (μ ± g) · e)"
+            equationText = "S = √(30 · D · (μ ± g) · e)",
+            signQuestion = SQ_GRADE_SPEED
         ) { ctx, v ->
             val D_in = v.req(Var.DISTANCE)
             val mu = v.req(Var.MU)
@@ -367,9 +413,15 @@ object UnitToolCatalog {
                 ),
                 steps = listOf(
                     "D(ft) = ${fmt(D_in)} ${ctx.distanceUnit.label} → ${fmt(Dft)} ft",
-                    "μeff = μ ${if (sign > 0) "+" else "−"} g = ${fmt(muAdj, 6)}",
-                    "Inside = 30 · ${fmt(Dft)} · ${fmt(muAdj, 6)} · ${fmt(e, 4)} = ${fmt(inside)}",
-                    "S = √(${fmt(inside)}) = ${fmt(S)} mph"
+                    "Formula:    S = √(30 · D · (μ ± g) · e)",
+                    "  D = ${fmt(Dft)} ft        (skid distance)",
+                    "  μ = ${fmt(mu, 6)}         (drag factor)",
+                    "  g = ${fmt(g, 6)}          (grade, + uphill / − downhill)",
+                    "  e = ${fmt(e, 4)}          (braking efficiency)",
+                    "Substitute: μ ${if (sign > 0) "+" else "−"} g = ${fmt(muAdj, 6)}",
+                    "Substitute: S = √(30 · ${fmt(Dft)} · ${fmt(muAdj, 6)} · ${fmt(e, 4)})",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     S = ${fmt(S)} mph"
                 )
             )
         }
@@ -425,8 +477,12 @@ object UnitToolCatalog {
                 inputs = listOf(CalcValue("R", R, "ft"), CalcValue("μ", mu, "drag")),
                 outputs = listOf(CalcValue("S", S, "mph"), CalcValue("V", mphToFps(S), "ft/s")),
                 steps = listOf(
-                    "Inside = 15 · ${fmt(R)} · ${fmt(mu, 6)} = ${fmt(inside)}",
-                    "S = √(${fmt(inside)}) = ${fmt(S)} mph"
+                    "Formula:    S = √(15 · R · μ)",
+                    "  R = ${fmt(R)} ft           (radius of curve)",
+                    "  μ = ${fmt(mu, 6)}          (drag factor)",
+                    "Substitute: S = √(15 · ${fmt(R)} · ${fmt(mu, 6)})",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     S = ${fmt(S)} mph"
                 )
             )
         }
@@ -436,7 +492,8 @@ object UnitToolCatalog {
             id = "flip_vault",
             goal = Goal.FLIP_VAULT_SPEED,
             requires = setOf(Var.DISTANCE, Var.HEIGHT),
-            equationText = "S = 3.87·d / √(d ± h)"
+            equationText = "S = 3.87·d / √(d ± h)",
+            signQuestion = SQ_VAULT
         ) { ctx, v ->
             val dIn = v.req(Var.DISTANCE)
             val hIn = v.req(Var.HEIGHT)
@@ -457,8 +514,12 @@ object UnitToolCatalog {
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
                     "h(ft) = ${fmt(hIn)} → ${fmt(hFt)} ft",
-                    "den = √(d ${if (sign > 0) "+" else "−"} h) = √(${fmt(denomInside)}) = ${fmt(denom)}",
-                    "S = 3.87·${fmt(dFt)} / ${fmt(denom)} = ${fmt(S)} mph"
+                    "Formula:    S = 3.87·d / √(d ± h)  [45° take-off assumed]",
+                    "  d = ${fmt(dFt)} ft       (horizontal distance)",
+                    "  h = ${fmt(hFt)} ft       (height, + landing lower / − landing higher)",
+                    "Substitute: S = 3.87·${fmt(dFt)} / √(${fmt(dFt)} ${if (sign > 0) "+" else "−"} ${fmt(hFt)})",
+                    "Compute:    denominator = √(${fmt(denomInside)}) = ${fmt(denom)}",
+                    "Result:     S = ${fmt(S)} mph"
                 )
             )
         }
@@ -468,7 +529,8 @@ object UnitToolCatalog {
             id = "fall_speed",
             goal = Goal.FALL_SPEED,
             requires = setOf(Var.DISTANCE, Var.HEIGHT, Var.GRADE),
-            equationText = "S = 2.73·d / √(h ± d·g)"
+            equationText = "S = 2.73·d / √(h ± d·g)",
+            signQuestion = SQ_FALL_GRADE
         ) { ctx, v ->
             val dIn = v.req(Var.DISTANCE)
             val hIn = v.req(Var.HEIGHT)
@@ -491,8 +553,13 @@ object UnitToolCatalog {
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
                     "h(ft) = ${fmt(hIn)} → ${fmt(hFt)} ft",
-                    "inside = h ${if (sign > 0) "+" else "−"} d·g = ${fmt(inside)}",
-                    "S = 2.73·${fmt(dFt)} / √(${fmt(inside)}) = ${fmt(S)} mph"
+                    "Formula:    S = 2.73·d / √(h ± d·g)",
+                    "  d = ${fmt(dFt)} ft       (horizontal distance)",
+                    "  h = ${fmt(hFt)} ft       (fall height)",
+                    "  g = ${fmt(g, 6)}         (grade, + downgrade / − upgrade)",
+                    "Substitute: S = 2.73·${fmt(dFt)} / √(${fmt(hFt)} ${if (sign > 0) "+" else "−"} ${fmt(dFt)}·${fmt(g, 6)})",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     S = ${fmt(S)} mph"
                 )
             )
         }
@@ -502,7 +569,8 @@ object UnitToolCatalog {
             id = "long_vault",
             goal = Goal.LONG_VAULT_SPEED,
             requires = setOf(Var.DISTANCE, Var.HEIGHT, Var.TAKEOFF_ANGLE_DEG),
-            equationText = "S = 2.73·d / √(d·cosθ·sinθ ± h·cos²θ)"
+            equationText = "S = 2.73·d / √(d·cosθ·sinθ ± h·cos²θ)",
+            signQuestion = SQ_VAULT
         ) { ctx, v ->
             val dIn = v.req(Var.DISTANCE)
             val hIn = v.req(Var.HEIGHT)
@@ -531,9 +599,14 @@ object UnitToolCatalog {
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
                     "h(ft) = ${fmt(hIn)} → ${fmt(hFt)} ft",
-                    "cosθ=${fmt(cosT, 6)}, sinθ=${fmt(sinT, 6)}",
-                    "inside=${fmt(inside)}",
-                    "S = 2.73·${fmt(dFt)} / √(${fmt(inside)}) = ${fmt(S)} mph"
+                    "Formula:    S = 2.73·d / √(d·cosθ·sinθ ± h·cos²θ)",
+                    "  d = ${fmt(dFt)} ft       (horizontal distance)",
+                    "  h = ${fmt(hFt)} ft       (height, + landing lower / − landing higher)",
+                    "  θ = ${fmt(thetaDeg)}°    (take-off angle)",
+                    "  cosθ = ${fmt(cosT, 6)},  sinθ = ${fmt(sinT, 6)}",
+                    "Substitute: S = 2.73·${fmt(dFt)} / √(${fmt(dFt)}·${fmt(cosT, 6)}·${fmt(sinT, 6)} ${if (sign > 0) "+" else "−"} ${fmt(hFt)}·${fmt(cosT, 6)}²)",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     S = ${fmt(S)} mph"
                 )
             )
         }
@@ -598,7 +671,8 @@ object UnitToolCatalog {
             id = "vf_from_v0_a_t",
             goal = Goal.VF_FROM_V0_A_T,
             requires = setOf(Var.V0_FPS, Var.A_FTPS2, Var.TIME),
-            equationText = "VF = V0 ± a·T"
+            equationText = "VF = V0 ± a·T",
+            signQuestion = SQ_ACCEL_DECEL
         ) { ctx, v ->
             val v0 = v.req(Var.V0_FPS)
             val a = v.req(Var.A_FTPS2)
@@ -618,8 +692,12 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("VF", vf, "ft/s"), CalcValue("SF", fpsToMph(vf), "mph")),
                 steps = listOf(
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "VF = ${fmt(v0)} ${if (sign > 0) "+" else "−"} ${fmt(a)}·${fmt(tSec)} = ${fmt(vf)} ft/s",
-                    "SF = ${fmt(fpsToMph(vf))} mph"
+                    "Formula:    VF = V0 ± a·T",
+                    "  V0 = ${fmt(v0)} ft/s     (initial velocity)",
+                    "  a  = ${fmt(a)} ft/s²     (acceleration/decel rate)",
+                    "  T  = ${fmt(tSec)} sec    (elapsed time)",
+                    "Substitute: VF = ${fmt(v0)} ${if (sign > 0) "+" else "−"} ${fmt(a)}·${fmt(tSec)}",
+                    "Result:     VF = ${fmt(vf)} ft/s  →  SF = ${fmt(fpsToMph(vf))} mph"
                 )
             )
         }
@@ -629,7 +707,8 @@ object UnitToolCatalog {
             id = "vf_from_v0_a_d",
             goal = Goal.VF_FROM_V0_A_D,
             requires = setOf(Var.V0_FPS, Var.A_FTPS2, Var.DISTANCE),
-            equationText = "VF = √(V0² ± 2·a·d)"
+            equationText = "VF = √(V0² ± 2·a·d)",
+            signQuestion = SQ_ACCEL_DECEL
         ) { ctx, v ->
             val v0 = v.req(Var.V0_FPS)
             val a = v.req(Var.A_FTPS2)
@@ -649,9 +728,13 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("VF", vf, "ft/s"), CalcValue("SF", fpsToMph(vf), "mph")),
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
-                    "inside = V0² ${if (sign > 0) "+" else "−"} 2·a·d = ${fmt(inside)}",
-                    "VF = √(${fmt(inside)}) = ${fmt(vf)} ft/s",
-                    "SF = ${fmt(fpsToMph(vf))} mph"
+                    "Formula:    VF = √(V0² ± 2·a·d)",
+                    "  V0 = ${fmt(v0)} ft/s     (initial velocity)",
+                    "  a  = ${fmt(a)} ft/s²     (rate)",
+                    "  d  = ${fmt(dFt)} ft      (distance)",
+                    "Substitute: VF = √(${fmt(v0)}² ${if (sign > 0) "+" else "−"} 2·${fmt(a)}·${fmt(dFt)})",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     VF = ${fmt(vf)} ft/s  →  SF = ${fmt(fpsToMph(vf))} mph"
                 )
             )
         }
@@ -661,7 +744,8 @@ object UnitToolCatalog {
             id = "final_speed_from_v0_a_t",
             goal = Goal.FINAL_SPEED_FROM_V0_A_T,
             requires = setOf(Var.V0_FPS, Var.A_FTPS2, Var.TIME),
-            equationText = "SF = fps→mph(V0 ± a·T)"
+            equationText = "SF = fps→mph(V0 ± a·T)",
+            signQuestion = SQ_ACCEL_DECEL
         ) { ctx, v ->
             val v0 = v.req(Var.V0_FPS)
             val a = v.req(Var.A_FTPS2)
@@ -682,8 +766,13 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("SF", sf, "mph"), CalcValue("VF", vf, "ft/s")),
                 steps = listOf(
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "VF = ${fmt(v0)} ${if (sign > 0) "+" else "−"} ${fmt(a)}·${fmt(tSec)} = ${fmt(vf)} ft/s",
-                    "SF = VF / 1.466 = ${fmt(sf)} mph"
+                    "Formula:    SF = fps→mph(V0 ± a·T)",
+                    "  V0 = ${fmt(v0)} ft/s     (initial velocity)",
+                    "  a  = ${fmt(a)} ft/s²     (rate)",
+                    "  T  = ${fmt(tSec)} sec    (elapsed time)",
+                    "Substitute: VF = ${fmt(v0)} ${if (sign > 0) "+" else "−"} ${fmt(a)}·${fmt(tSec)}",
+                    "Compute:    VF = ${fmt(vf)} ft/s",
+                    "Result:     SF = VF / 1.466 = ${fmt(sf)} mph"
                 )
             )
         }
@@ -692,7 +781,8 @@ object UnitToolCatalog {
             id = "final_speed_from_v0_mu_t",
             goal = Goal.FINAL_SPEED_FROM_V0_MU_T,
             requires = setOf(Var.V0_FPS, Var.A_FTPS2, Var.TIME), // a is derived from μ if user provides μ
-            equationText = "SF = fps→mph(V0 ± (32.2·μ)·T)"
+            equationText = "SF = fps→mph(V0 ± (32.2·μ)·T)",
+            signQuestion = SQ_ACCEL_DECEL
         ) { ctx, v ->
             val v0 = v.req(Var.V0_FPS)
             val a = v.req(Var.A_FTPS2)
@@ -778,7 +868,11 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("μ", mu, "drag")),
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
-                    "μ = ${fmt(S)}² / (30·${fmt(dFt)}) = ${fmt(mu, 6)}"
+                    "Formula:    μ = S² / (30·d)",
+                    "  S = ${fmt(S)} mph         (speed)",
+                    "  d = ${fmt(dFt)} ft        (skid distance)",
+                    "Substitute: μ = ${fmt(S)}² / (30·${fmt(dFt)})",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -808,7 +902,11 @@ object UnitToolCatalog {
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "μ = ${fmt(dFt)} / (16.1·${fmt(tSec)}²) = ${fmt(mu, 6)}"
+                    "Formula:    μ = d / (16.1·T²)",
+                    "  d = ${fmt(dFt)} ft        (distance)",
+                    "  T = ${fmt(tSec)} sec      (time)",
+                    "Substitute: μ = ${fmt(dFt)} / (16.1·${fmt(tSec)}²)",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -832,7 +930,11 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("μ", mu, "drag")),
                 steps = listOf(
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "μ = ${fmt(V)} / (32.2·${fmt(tSec)}) = ${fmt(mu, 6)}"
+                    "Formula:    μ = V / (32.2·T)",
+                    "  V = ${fmt(V)} ft/s        (velocity from/to stop)",
+                    "  T = ${fmt(tSec)} sec      (time to stop)",
+                    "Substitute: μ = ${fmt(V)} / (32.2·${fmt(tSec)})",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -861,7 +963,12 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("μ", mu, "drag")),
                 steps = listOf(
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "μ = (${fmt(vf)} − ${fmt(v0)}) / (32.2·${fmt(tSec)}) = ${fmt(mu, 6)}"
+                    "Formula:    μ = (VF − V0) / (32.2·T)",
+                    "  V0 = ${fmt(v0)} ft/s      (initial velocity)",
+                    "  VF = ${fmt(vf)} ft/s      (final velocity)",
+                    "  T  = ${fmt(tSec)} sec     (elapsed time)",
+                    "Substitute: μ = (${fmt(vf)} − ${fmt(v0)}) / (32.2·${fmt(tSec)})",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -890,7 +997,12 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("μ", mu, "drag")),
                 steps = listOf(
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "μ = (${fmt(v0)} − ${fmt(vf)}) / (32.2·${fmt(tSec)}) = ${fmt(mu, 6)}"
+                    "Formula:    μ = (V0 − VF) / (32.2·T)",
+                    "  V0 = ${fmt(v0)} ft/s      (initial velocity)",
+                    "  VF = ${fmt(vf)} ft/s      (final velocity)",
+                    "  T  = ${fmt(tSec)} sec     (elapsed time)",
+                    "Substitute: μ = (${fmt(v0)} − ${fmt(vf)}) / (32.2·${fmt(tSec)})",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -919,7 +1031,12 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("μ", mu, "drag")),
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
-                    "μ = (${fmt(vf)}² − ${fmt(v0)}²) / (64.4·${fmt(dFt)}) = ${fmt(mu, 6)}"
+                    "Formula:    μ = (VF² − V0²) / (64.4·d)",
+                    "  V0 = ${fmt(v0)} ft/s      (initial velocity)",
+                    "  VF = ${fmt(vf)} ft/s      (final velocity)",
+                    "  d  = ${fmt(dFt)} ft       (distance)",
+                    "Substitute: μ = (${fmt(vf)}² − ${fmt(v0)}²) / (64.4·${fmt(dFt)})",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -972,7 +1089,12 @@ object UnitToolCatalog {
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
                     "T(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "μ = (${fmt(dFt)} − ${fmt(v0)}·${fmt(tSec)}) / (16.1·${fmt(tSec)}²) = ${fmt(mu, 6)}"
+                    "Formula:    μ = (d − V0·T) / (16.1·T²)",
+                    "  d  = ${fmt(dFt)} ft       (distance)",
+                    "  V0 = ${fmt(v0)} ft/s      (initial velocity)",
+                    "  T  = ${fmt(tSec)} sec     (elapsed time)",
+                    "Substitute: μ = (${fmt(dFt)} − ${fmt(v0)}·${fmt(tSec)}) / (16.1·${fmt(tSec)}²)",
+                    "Result:     μ = ${fmt(mu, 6)}"
                 )
             )
         }
@@ -1058,13 +1180,20 @@ object UnitToolCatalog {
                 equationText = "T = (V0 − VF) / a",
                 inputs = listOf(
                     CalcValue("V0", v0, "ft/s"),
+                    CalcValue("S0", fpsToMph(v0), "mph"),
                     CalcValue("VF", vf, "ft/s"),
+                    CalcValue("SF", fpsToMph(vf), "mph"),
                     CalcValue("a", a, "ft/s²")
                 ),
                 outputs = listOf(CalcValue("T", tOut, ctx.timeUnit.label)),
                 steps = listOf(
-                    "T(sec) = (${fmt(v0)} − ${fmt(vf)}) / ${fmt(a)} = ${fmt(tSec)} sec",
-                    "T(${ctx.timeUnit.label}) = ${fmt(tOut)} ${ctx.timeUnit.label}"
+                    "Formula:    T = (V0 − VF) / a",
+                    "  V0 = ${fmt(v0)} ft/s  (${fmt(fpsToMph(v0))} mph)",
+                    "  VF = ${fmt(vf)} ft/s  (${fmt(fpsToMph(vf))} mph)",
+                    "  a  = ${fmt(a)} ft/s²",
+                    "Substitute: T = (${fmt(v0)} − ${fmt(vf)}) / ${fmt(a)}",
+                    "Compute:    T(sec) = ${fmt(tSec)} sec",
+                    "Result:     T = ${fmt(tOut)} ${ctx.timeUnit.label}"
                 )
             )
         }
@@ -1090,13 +1219,20 @@ object UnitToolCatalog {
                 equationText = "T = (VF − V0) / a",
                 inputs = listOf(
                     CalcValue("V0", v0, "ft/s"),
+                    CalcValue("S0", fpsToMph(v0), "mph"),
                     CalcValue("VF", vf, "ft/s"),
+                    CalcValue("SF", fpsToMph(vf), "mph"),
                     CalcValue("a", a, "ft/s²")
                 ),
                 outputs = listOf(CalcValue("T", tOut, ctx.timeUnit.label)),
                 steps = listOf(
-                    "T(sec) = (${fmt(vf)} − ${fmt(v0)}) / ${fmt(a)} = ${fmt(tSec)} sec",
-                    "T(${ctx.timeUnit.label}) = ${fmt(tOut)} ${ctx.timeUnit.label}"
+                    "Formula:    T = (VF − V0) / a",
+                    "  V0 = ${fmt(v0)} ft/s  (${fmt(fpsToMph(v0))} mph)",
+                    "  VF = ${fmt(vf)} ft/s  (${fmt(fpsToMph(vf))} mph)",
+                    "  a  = ${fmt(a)} ft/s²",
+                    "Substitute: T = (${fmt(vf)} − ${fmt(v0)}) / ${fmt(a)}",
+                    "Compute:    T(sec) = ${fmt(tSec)} sec",
+                    "Result:     T = ${fmt(tOut)} ${ctx.timeUnit.label}"
                 )
             )
         }
@@ -1127,8 +1263,12 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("T", tOut, ctx.timeUnit.label)),
                 steps = listOf(
                     "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
-                    "T(sec) = 0.25 · √(${fmt(dFt)} / ${fmt(mu, 6)}) = ${fmt(tSec)} sec",
-                    "T(${ctx.timeUnit.label}) = ${fmt(tOut)} ${ctx.timeUnit.label}"
+                    "Formula:    T = 0.25 · √(d / μ)",
+                    "  d = ${fmt(dFt)} ft        (distance, from/to stop)",
+                    "  μ = ${fmt(mu, 6)}         (drag factor)",
+                    "Substitute: T = 0.25 · √(${fmt(dFt)} / ${fmt(mu, 6)})",
+                    "Compute:    T(sec) = ${fmt(tSec)} sec",
+                    "Result:     T = ${fmt(tOut)} ${ctx.timeUnit.label}"
                 )
             )
         }
@@ -1246,7 +1386,8 @@ object UnitToolCatalog {
             id = "dist_from_v0_t_a",
             goal = Goal.DIST_FROM_V0_T_A,
             requires = setOf(Var.V0_FPS, Var.A_FTPS2, Var.TIME),
-            equationText = "d = V0·t ± (a·t²)/2"
+            equationText = "d = V0·t ± (a·t²)/2",
+            signQuestion = SQ_ACCEL_DECEL
         ) { ctx, v ->
             val v0 = v.req(Var.V0_FPS)
             val a = v.req(Var.A_FTPS2)
@@ -1270,9 +1411,13 @@ object UnitToolCatalog {
                 outputs = listOf(CalcValue("d", dOut, ctx.distanceUnit.label)),
                 steps = listOf(
                     "t(sec) = ${fmt(tIn)} → ${fmt(tSec)} sec",
-                    "d(ft) = V0·t ${if (sign > 0) "+" else "−"} (a·t²)/2",
-                    "d(ft) = ${fmt(v0)}·${fmt(tSec)} ${if (sign > 0) "+" else "−"} (${fmt(a)}·${fmt(tSec)}²)/2 = ${fmt(dFt)} ft",
-                    "d(${ctx.distanceUnit.label}) = ${fmt(dOut)} ${ctx.distanceUnit.label}"
+                    "Formula:    d = V0·t ± (a·t²)/2",
+                    "  V0 = ${fmt(v0)} ft/s      (initial velocity)",
+                    "  a  = ${fmt(a)} ft/s²      (rate)",
+                    "  t  = ${fmt(tSec)} sec     (elapsed time)",
+                    "Substitute: d = ${fmt(v0)}·${fmt(tSec)} ${if (sign > 0) "+" else "−"} (${fmt(a)}·${fmt(tSec)}²)/2",
+                    "Compute:    d = ${fmt(dFt)} ft",
+                    "Result:     d = ${fmt(dOut)} ${ctx.distanceUnit.label}"
                 )
             )
         }
@@ -1297,9 +1442,12 @@ object UnitToolCatalog {
                 inputs = listOf(CalcValue("S", S, "mph")),
                 outputs = listOf(CalcValue("d(p/r)", dOut, ctx.distanceUnit.label)),
                 steps = listOf(
-                    "V(ft/s) = ${fmt(S)}·1.466 = ${fmt(V)} ft/s",
-                    "d(ft) = ${fmt(V)}·1.5 = ${fmt(dFt)} ft",
-                    "d(${ctx.distanceUnit.label}) = ${fmt(dOut)} ${ctx.distanceUnit.label}"
+                    "Formula:    d(p/r) = V(ft/s) · 1.5  [assumes 1.5 sec reaction time]",
+                    "  S = ${fmt(S)} mph          (approach speed)",
+                    "  V = S·1.466 = ${fmt(V)} ft/s",
+                    "Substitute: d = ${fmt(V)} · 1.5",
+                    "Compute:    d = ${fmt(dFt)} ft",
+                    "Result:     d(p/r) = ${fmt(dOut)} ${ctx.distanceUnit.label}"
                 )
             )
         }
@@ -1343,11 +1491,13 @@ object UnitToolCatalog {
                     CalcValue("d(total)", totalOut, ctx.distanceUnit.label)
                 ),
                 steps = listOf(
-                    "V(ft/s) = ${fmt(S)}·1.466 = ${fmt(V)} ft/s",
-                    "d(p/r)(ft) = V·1.5 = ${fmt(prFt)} ft",
-                    "d(braking)(ft) = S²/(30·μ) = ${fmt(S)}²/(30·${fmt(mu, 6)}) = ${fmt(brakeFt)} ft",
-                    "d(total)(ft) = ${fmt(prFt)} + ${fmt(brakeFt)} = ${fmt(totalFt)} ft",
-                    "d(total) = ${fmt(totalOut)} ${ctx.distanceUnit.label}"
+                    "Formula:    d(total) = d(p/r) + d(braking)",
+                    "  S = ${fmt(S)} mph,  μ = ${fmt(mu, 6)}",
+                    "  V = S·1.466 = ${fmt(V)} ft/s",
+                    "d(p/r):     V · 1.5 = ${fmt(V)}·1.5 = ${fmt(prFt)} ft",
+                    "d(braking): S²/(30·μ) = ${fmt(S)}²/(30·${fmt(mu, 6)}) = ${fmt(brakeFt)} ft",
+                    "Compute:    d(total) = ${fmt(prFt)} + ${fmt(brakeFt)} = ${fmt(totalFt)} ft",
+                    "Result:     d(total) = ${fmt(totalOut)} ${ctx.distanceUnit.label}"
                 )
             )
         }
@@ -1413,8 +1563,12 @@ object UnitToolCatalog {
                 ),
                 outputs = listOf(CalcValue("θ", theta, "deg")),
                 steps = listOf(
-                    "d(ft)=${fmt(dFt)}, h(ft)=${fmt(hFt)}",
-                    "θ = atan(${fmt(hFt)}/${fmt(dFt)}) = ${fmt(theta)}°"
+                    "d(ft) = ${fmt(dFt)},  h(ft) = ${fmt(hFt)}",
+                    "Formula:    θ = atan(h/d)",
+                    "  h = ${fmt(hFt)} ft        (height difference)",
+                    "  d = ${fmt(dFt)} ft        (horizontal distance)",
+                    "Substitute: θ = atan(${fmt(hFt)} / ${fmt(dFt)})",
+                    "Result:     θ = ${fmt(theta)}°"
                 )
             )
         }
@@ -1441,8 +1595,12 @@ object UnitToolCatalog {
                 ),
                 outputs = listOf(CalcValue("θ", theta, "deg")),
                 steps = listOf(
-                    "base = atan(h/d) = ${fmt(base)}°",
-                    "θ = base/2 = ${fmt(theta)}°"
+                    "d(ft) = ${fmt(dFt)},  h(ft) = ${fmt(hFt)}",
+                    "Formula:    θ = atan(h/d) / 2  [landing lower, unknown take-off]",
+                    "  h = ${fmt(hFt)} ft        (height difference)",
+                    "  d = ${fmt(dFt)} ft        (horizontal distance)",
+                    "Compute:    base = atan(${fmt(hFt)} / ${fmt(dFt)}) = ${fmt(base)}°",
+                    "Result:     θ = base/2 = ${fmt(theta)}°"
                 )
             )
         }
@@ -1469,8 +1627,12 @@ object UnitToolCatalog {
                 ),
                 outputs = listOf(CalcValue("θ", theta, "deg")),
                 steps = listOf(
-                    "base = atan(h/d) = ${fmt(base)}°",
-                    "θ = 90 − base/2 = ${fmt(theta)}°"
+                    "d(ft) = ${fmt(dFt)},  h(ft) = ${fmt(hFt)}",
+                    "Formula:    θ = 90 − atan(h/d)/2  [landing higher, unknown take-off]",
+                    "  h = ${fmt(hFt)} ft        (height difference)",
+                    "  d = ${fmt(dFt)} ft        (horizontal distance)",
+                    "Compute:    base = atan(${fmt(hFt)} / ${fmt(dFt)}) = ${fmt(base)}°",
+                    "Result:     θ = 90 − base/2 = ${fmt(theta)}°"
                 )
             )
         }
@@ -1492,7 +1654,11 @@ object UnitToolCatalog {
                 inputs = listOf(CalcValue("C", C, "ft"), CalcValue("m", m, "ft")),
                 outputs = listOf(CalcValue("R", R, "ft")),
                 steps = listOf(
-                    "R = ${fmt(C)}²/(8·${fmt(m)}) + ${fmt(m)}/2 = ${fmt(R)} ft"
+                    "Formula:    R = C²/(8·m) + m/2",
+                    "  C = ${fmt(C)} ft          (chord length)",
+                    "  m = ${fmt(m)} ft          (middle-ordinate)",
+                    "Substitute: R = ${fmt(C)}²/(8·${fmt(m)}) + ${fmt(m)}/2",
+                    "Result:     R = ${fmt(R)} ft"
                 )
             )
         }
@@ -1555,6 +1721,120 @@ object UnitToolCatalog {
             )
         }
 
+        // grade ↔ angle
+        list += Formula(
+            id = "grade_to_angle",
+            goal = Goal.GRADE_TO_ANGLE,
+            requires = setOf(Var.GRADE),
+            equationText = "θ = atan(g)°"
+        ) { _, v ->
+            val g = v.req(Var.GRADE)
+            val theta = atan(g) * 180.0 / Math.PI
+            Computed(
+                title = "θ: ${fmt(theta)}°",
+                equationText = "θ = atan(g)°",
+                inputs = listOf(CalcValue("g", g, "grade")),
+                outputs = listOf(CalcValue("θ", theta, "deg")),
+                steps = listOf(
+                    "Formula:    θ = atan(g) × (180/π)",
+                    "  g = ${fmt(g, 6)}          (grade as decimal)",
+                    "Substitute: θ = atan(${fmt(g, 6)}) × (180/π)",
+                    "Result:     θ = ${fmt(theta)}°"
+                )
+            )
+        }
+
+        list += Formula(
+            id = "angle_to_grade",
+            goal = Goal.ANGLE_TO_GRADE,
+            requires = setOf(Var.TAKEOFF_ANGLE_DEG),
+            equationText = "g = tan(θ)"
+        ) { _, v ->
+            val theta = v.req(Var.TAKEOFF_ANGLE_DEG)
+            require(kotlin.math.abs(theta) < 89.9) { "Angle must be less than 89.9° (tangent diverges near vertical)." }
+            val g = tan(degToRad(theta))
+            Computed(
+                title = "Grade: ${fmt(g, 6)}",
+                equationText = "g = tan(θ)",
+                inputs = listOf(CalcValue("θ", theta, "deg")),
+                outputs = listOf(CalcValue("g", g, "grade")),
+                steps = listOf(
+                    "Formula:    g = tan(θ)",
+                    "  θ = ${fmt(theta)}°         (angle in degrees)",
+                    "Substitute: g = tan(${fmt(theta)}°)",
+                    "Result:     g = ${fmt(g, 6)}"
+                )
+            )
+        }
+
+        // starting speed / velocity to a stop
+        list += Formula(
+            id = "v0_from_a_d_stop",
+            goal = Goal.V0_FROM_A_D_STOP,
+            requires = setOf(Var.A_FTPS2, Var.DISTANCE),
+            equationText = "V0 = √(2·a·d)"
+        ) { ctx, v ->
+            val a = v.req(Var.A_FTPS2)
+            val dIn = v.req(Var.DISTANCE)
+            val dFt = distToFt(dIn, ctx.distanceUnit)
+            require(a > 0) { "Rate must be > 0." }
+            require(dFt > 0) { "Distance must be > 0." }
+            val inside = 2.0 * a * dFt
+            val v0 = safeSqrt(inside)
+            Computed(
+                title = "V0: ${fmt(v0)} ft/s",
+                equationText = "V0 = √(2·a·d)",
+                inputs = listOf(
+                    CalcValue("a", a, "ft/s²"),
+                    CalcValue("d", dIn, ctx.distanceUnit.label)
+                ),
+                outputs = listOf(CalcValue("V0", v0, "ft/s"), CalcValue("S0", fpsToMph(v0), "mph")),
+                steps = listOf(
+                    "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
+                    "Formula:    V0 = √(2·a·d)  [VF = 0, decelerating to stop]",
+                    "  a = ${fmt(a)} ft/s²       (decel rate)",
+                    "  d = ${fmt(dFt)} ft        (stopping distance)",
+                    "Substitute: V0 = √(2·${fmt(a)}·${fmt(dFt)})",
+                    "Compute:    inside = ${fmt(inside)}",
+                    "Result:     V0 = ${fmt(v0)} ft/s  →  S0 = ${fmt(fpsToMph(v0))} mph"
+                )
+            )
+        }
+
+        list += Formula(
+            id = "s0_from_a_d_stop",
+            goal = Goal.S0_FROM_A_D_STOP,
+            requires = setOf(Var.A_FTPS2, Var.DISTANCE),
+            equationText = "S0 = fps→mph(√(2·a·d))"
+        ) { ctx, v ->
+            val a = v.req(Var.A_FTPS2)
+            val dIn = v.req(Var.DISTANCE)
+            val dFt = distToFt(dIn, ctx.distanceUnit)
+            require(a > 0) { "Rate must be > 0." }
+            require(dFt > 0) { "Distance must be > 0." }
+            val inside = 2.0 * a * dFt
+            val v0 = safeSqrt(inside)
+            val s0 = fpsToMph(v0)
+            Computed(
+                title = "S0: ${fmt(s0)} mph",
+                equationText = "S0 = fps→mph(√(2·a·d))",
+                inputs = listOf(
+                    CalcValue("a", a, "ft/s²"),
+                    CalcValue("d", dIn, ctx.distanceUnit.label)
+                ),
+                outputs = listOf(CalcValue("S0", s0, "mph"), CalcValue("V0", v0, "ft/s")),
+                steps = listOf(
+                    "d(ft) = ${fmt(dIn)} → ${fmt(dFt)} ft",
+                    "Formula:    S0 = fps→mph(√(2·a·d))  [VF = 0, decelerating to stop]",
+                    "  a = ${fmt(a)} ft/s²       (decel rate)",
+                    "  d = ${fmt(dFt)} ft        (stopping distance)",
+                    "Substitute: V0 = √(2·${fmt(a)}·${fmt(dFt)})",
+                    "Compute:    V0 = ${fmt(v0)} ft/s",
+                    "Result:     S0 = V0 / 1.466 = ${fmt(s0)} mph"
+                )
+            )
+        }
+
         return list
     }
 
@@ -1573,8 +1853,8 @@ object UnitToolCatalog {
         Goal.YAW_SPEED -> listOf(Var.RADIUS, Var.MU)
 
         Goal.FLIP_VAULT_SPEED -> listOf(Var.DISTANCE, Var.HEIGHT)
-        Goal.FALL_SPEED -> listOf(Var.DISTANCE, Var.HEIGHT, Var.GRADE)
-        Goal.LONG_VAULT_SPEED -> listOf(Var.DISTANCE, Var.HEIGHT, Var.TAKEOFF_ANGLE_DEG)
+        Goal.FALL_SPEED -> listOf(Var.DISTANCE, Var.HEIGHT, Var.GRADE, Var.TAKEOFF_ANGLE_DEG)
+        Goal.LONG_VAULT_SPEED -> listOf(Var.DISTANCE, Var.HEIGHT, Var.TAKEOFF_ANGLE_DEG, Var.GRADE)
 
         Goal.AVG_VELOCITY_FROM_D_T -> listOf(Var.DISTANCE, Var.TIME)
 
@@ -1602,9 +1882,9 @@ object UnitToolCatalog {
 
         Goal.TIME_FROM_D_V -> listOf(Var.DISTANCE, Var.VELOCITY_FPS, Var.SPEED_MPH)
         Goal.TIME_FROM_V_A -> listOf(Var.VELOCITY_FPS, Var.SPEED_MPH, Var.A_FTPS2, Var.MU)
-        Goal.TIME_DECEL_V0_VF_A -> listOf(Var.V0_FPS, Var.VF_FPS, Var.A_FTPS2, Var.MU)
-        Goal.TIME_ACCEL_V0_VF_A -> listOf(Var.V0_FPS, Var.VF_FPS, Var.A_FTPS2, Var.MU)
-        Goal.TIME_FROM_D_MU -> listOf(Var.DISTANCE, Var.MU)
+        Goal.TIME_DECEL_V0_VF_A -> listOf(Var.V0_FPS, Var.V0_SPEED_MPH, Var.VF_FPS, Var.VF_SPEED_MPH, Var.A_FTPS2, Var.MU)
+        Goal.TIME_ACCEL_V0_VF_A -> listOf(Var.V0_FPS, Var.V0_SPEED_MPH, Var.VF_FPS, Var.VF_SPEED_MPH, Var.A_FTPS2, Var.MU)
+        Goal.TIME_FROM_D_MU -> listOf(Var.DISTANCE, Var.MU, Var.A_FTPS2)
 
         Goal.DIST_FROM_V_T -> listOf(Var.VELOCITY_FPS, Var.SPEED_MPH, Var.TIME)
         Goal.DIST_FROM_S_MU -> listOf(Var.SPEED_MPH, Var.MU)
@@ -1625,6 +1905,12 @@ object UnitToolCatalog {
         Goal.SIN_FROM_OPP_HYP -> listOf(Var.OPP, Var.HYP)
         Goal.COS_FROM_ADJ_HYP -> listOf(Var.ADJ, Var.HYP)
         Goal.TAN_FROM_OPP_ADJ -> listOf(Var.OPP, Var.ADJ)
+
+        Goal.GRADE_TO_ANGLE -> listOf(Var.GRADE)
+        Goal.ANGLE_TO_GRADE -> listOf(Var.TAKEOFF_ANGLE_DEG)
+
+        Goal.V0_FROM_A_D_STOP -> listOf(Var.A_FTPS2, Var.MU, Var.DISTANCE)
+        Goal.S0_FROM_A_D_STOP -> listOf(Var.A_FTPS2, Var.MU, Var.DISTANCE)
     }
 
     /**
@@ -1642,4 +1928,31 @@ object UnitToolCatalog {
             .sortedWith(compareByDescending<Formula> { it.requires.size }.thenBy { it.id })
             .firstOrNull()
     }
+
+    /**
+     * If a goal has exactly one formula and varsForGoal == that formula's requires,
+     * there's no real choice to make — return the auto-selected var set.
+     * Returns null if the user needs to pick "what do you know".
+     */
+    fun autoSelectVarsForGoal(goal: Goal, cachedFormulas: List<Formula>): Set<Var>? {
+        val single = cachedFormulas.filter { it.goal == goal }.singleOrNull() ?: return null
+        val options = varsForGoal(goal).toSet()
+        return if (options == single.requires) single.requires else null
+    }
+
+    /**
+     * Goals whose primary output is a speed in mph — used by CombinedSpeedScreen
+     * to populate the per-segment formula picker.
+     */
+    fun speedGoals(): List<Goal> = listOf(
+        Goal.SPEED_FROM_D_MU_E,
+        Goal.SPEED_FROM_D_MU_G_E,
+        Goal.YAW_SPEED,
+        Goal.FLIP_VAULT_SPEED,
+        Goal.FALL_SPEED,
+        Goal.LONG_VAULT_SPEED,
+        Goal.FINAL_SPEED_FROM_V0_A_T,
+        Goal.FINAL_SPEED_FROM_V0_MU_T,
+        Goal.S0_FROM_A_D_STOP
+    )
 }

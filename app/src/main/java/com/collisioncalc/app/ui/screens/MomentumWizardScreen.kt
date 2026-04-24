@@ -4,14 +4,18 @@ import com.collisioncalc.app.R
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.unit.dp
 import com.collisioncalc.app.data.CalcType
 import com.collisioncalc.app.data.CalcValue
@@ -19,6 +23,8 @@ import com.collisioncalc.app.data.CaseFile
 import com.collisioncalc.app.data.SavedCalculation
 import com.collisioncalc.app.ui.components.AttributionPicker
 import com.collisioncalc.app.ui.components.AttributionSelection
+import com.collisioncalc.app.ui.components.SpeedInputState
+import com.collisioncalc.app.ui.components.SpeedInputWithFormulaPicker
 import kotlin.math.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,8 +45,8 @@ fun MomentumWizardScreen(
     var s1PreText by remember { mutableStateOf("") }
     var s2PreText by remember { mutableStateOf("") }
 
-    var s1PostText by remember { mutableStateOf("") }
-    var s2PostText by remember { mutableStateOf("") }
+    var s1PostState by remember { mutableStateOf(SpeedInputState()) }
+    var s2PostState by remember { mutableStateOf(SpeedInputState()) }
 
     var t1PreText by remember { mutableStateOf("0") }
     var t2PreText by remember { mutableStateOf("90") }
@@ -54,8 +60,8 @@ fun MomentumWizardScreen(
 
     val s1Pre = d(s1PreText)
     val s2Pre = d(s2PreText)
-    val s1Post = d(s1PostText)
-    val s2Post = d(s2PostText)
+    val s1Post = s1PostState.effectiveValue
+    val s2Post = s2PostState.effectiveValue
 
     val t1Pre = d(t1PreText)
     val t2Pre = d(t2PreText)
@@ -108,11 +114,31 @@ fun MomentumWizardScreen(
         if (!s2PreOk) add("S2 (pre) must be ≥ 0")
     }
 
-    val steps = outcome?.steps ?: buildList {
-        add("360° Momentum Method")
-        add("Fill weights, post speeds, and all angles.")
-        add("Leave S1 and/or S2 blank to solve for unknowns.")
-        if (!canSolve) add("Missing/invalid: ${missing.joinToString(", ")}")
+    val postCrashDerivationSteps: List<String> = buildList {
+        val b1 = s1PostState.derivationBlock("S1′ (post-crash speed)")
+        val b2 = s2PostState.derivationBlock("S2′ (post-crash speed)")
+        if (b1.isNotEmpty() || b2.isNotEmpty()) {
+            add("=== Post-crash speed derivations ===")
+            if (b1.isNotEmpty()) {
+                addAll(b1)
+                add("")
+            }
+            if (b2.isNotEmpty()) {
+                addAll(b2)
+                add("")
+            }
+        }
+    }
+
+    val steps = buildList {
+        addAll(postCrashDerivationSteps)
+        val base = outcome?.steps ?: buildList {
+            add("360° Momentum Method")
+            add("Fill weights, post speeds, and all angles.")
+            add("Leave S1 and/or S2 blank to solve for unknowns.")
+            if (!canSolve) add("Missing/invalid: ${missing.joinToString(", ")}")
+        }
+        addAll(base)
     }
 
     Scaffold(
@@ -189,17 +215,31 @@ fun MomentumWizardScreen(
                         isError = s2PreText.isNotBlank() && !s2PreOk,
                         supportingText = if (s2PreText.isNotBlank() && !s2PreOk) "Enter 0 or greater." else null
                     )
-                    NumericField(
-                        label = "S1′ (post) — required", value = s1PostText,
-                        onValueChange = { s1PostText = it }, unit = "mph",
-                        isError = s1PostText.isNotBlank() && !s1PostOk,
-                        supportingText = if (s1PostText.isNotBlank() && !s1PostOk) "Enter 0 or greater." else null
+                    Text(
+                        "Post-crash speeds are the speeds of each vehicle after the collision (speed loss). " +
+                                "Enter them directly if known, or calculate from skid, yaw, vault, etc.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    NumericField(
-                        label = "S2′ (post) — required", value = s2PostText,
-                        onValueChange = { s2PostText = it }, unit = "mph",
-                        isError = s2PostText.isNotBlank() && !s2PostOk,
-                        supportingText = if (s2PostText.isNotBlank() && !s2PostOk) "Enter 0 or greater." else null
+                    SpeedInputWithFormulaPicker(
+                        label = "S1′ (post) — required",
+                        state = s1PostState,
+                        onStateChange = { s1PostState = it },
+                        isError = s1PostState.mode == SpeedInputState.Mode.Manual &&
+                                s1PostState.manualText.isNotBlank() && !s1PostOk,
+                        supportingText = if (s1PostState.mode == SpeedInputState.Mode.Manual &&
+                            s1PostState.manualText.isNotBlank() && !s1PostOk
+                        ) "Enter 0 or greater." else null
+                    )
+                    SpeedInputWithFormulaPicker(
+                        label = "S2′ (post) — required",
+                        state = s2PostState,
+                        onStateChange = { s2PostState = it },
+                        isError = s2PostState.mode == SpeedInputState.Mode.Manual &&
+                                s2PostState.manualText.isNotBlank() && !s2PostOk,
+                        supportingText = if (s2PostState.mode == SpeedInputState.Mode.Manual &&
+                            s2PostState.manualText.isNotBlank() && !s2PostOk
+                        ) "Enter 0 or greater." else null
                     )
                 }
             }
@@ -359,14 +399,24 @@ private fun NumericField(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     isError: Boolean = false,
-    supportingText: String? = null
+    supportingText: String? = null,
+    imeAction: ImeAction = ImeAction.Next
 ) {
+    val focusManager = LocalFocusManager.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
         trailingIcon = { Text(unit) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Decimal,
+            imeAction = imeAction
+        ),
+        keyboardActions = KeyboardActions(
+            onNext = { focusManager.moveFocus(FocusDirection.Next) },
+            onDone = { focusManager.clearFocus() }
+        ),
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
         isError = isError,
